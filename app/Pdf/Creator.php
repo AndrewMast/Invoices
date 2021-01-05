@@ -4,7 +4,7 @@ namespace App\Pdf;
 
 use Illuminate\Support\Str;
 
-class PdfGenerator {
+class Creator {
 	public $fpdf;
 
 	public function __construct(Fpdf $fpdf = null, $orientation = null, $unit = null, $size = null) {

@@ -26,10 +26,22 @@ function objectToArray($d) {
     }
 }
 
-function resources_path($file = '') {
-    return __DIR__ . '/resources/' . $file;
+function base_path($file = '') {
+    return __DIR__ . DIRECTORY_SEPARATOR . $file;
 }
 
-function fonts_path($file = '') {
-    return resources_path('fonts/' . $file);
+function output_path($file = '') {
+    return base_path('output' . DIRECTORY_SEPARATOR . $file);
+}
+
+function invoice_path($file = '') {
+    return output_path('invoices' . DIRECTORY_SEPARATOR . $file);
+}
+
+function resource_path($file = '') {
+    return base_path('resources' . DIRECTORY_SEPARATOR . $file);
+}
+
+function font_path($file = '') {
+    return resource_path('fonts' . DIRECTORY_SEPARATOR . $file);
 }

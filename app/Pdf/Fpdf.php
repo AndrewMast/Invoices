@@ -8,7 +8,7 @@ class Fpdf extends CrabblyFpdf {
 	public function __construct($orientation='P', $unit='mm', $size='a4') {
 		parent::__construct($orientation, $unit, $size);
 
-		$this->fontpath = fonts_path();
+		$this->fontpath = font_path();
 
 		$margin = 0;
 

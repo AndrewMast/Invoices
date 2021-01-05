@@ -1,14 +1,14 @@
 <?php
 
-namespace App\Renderers;
+namespace App\Pdf;
 
 use App\Pdf\Data\Color;
-use App\Pdf\PdfGenerator;
+use App\Pdf\Creator;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 
-class Renderer {
+class Generator {
 	protected $settings = [];
 
 	public function __construct($settings = []) {
@@ -39,8 +39,8 @@ class Renderer {
         ], $settings ?? []);
 	}
 
-	public function render($items, PdfGenerator $pdf = null) {
-		$pdf = $pdf ?? new PdfGenerator(null, $this->settings['orientation'], $this->settings['unit'], $this->settings['size']);
+	public function render($items, Creator $pdf = null) {
+		$pdf = $pdf ?? new Creator(null, $this->settings['orientation'], $this->settings['unit'], $this->settings['size']);
 		$pdf->addPage();
 		$pdf->setAutoPageBreak(false);
 
@@ -55,7 +55,7 @@ class Renderer {
 		return $pdf;
 	}
 
-	public function renderItem($item, PdfGenerator $pdf) {
+	public function renderItem($item, Creator $pdf) {
 		if (!isset($item['type'])) {
 			return;
 		}
@@ -77,7 +77,7 @@ class Renderer {
 		}
 	}
 
-	public function renderTextItem($item, PdfGenerator $pdf) {
+	public function renderTextItem($item, Creator $pdf) {
 		$size = $item['font']['size'];
 
         $text = $this->transformText($item['text'], $item['font']['transform']);
@@ -101,7 +101,7 @@ class Renderer {
 		$pdf->cell(1, $size, $text, 0, 2, $item['font']['align']);
 	}
 
-	public function renderTextareaItem($item, PdfGenerator $pdf) {
+	public function renderTextareaItem($item, Creator $pdf) {
 		$text = $this->transformText($item['text'], $item['font']['transform']);
 
         $pdf->setFont(
@@ -113,10 +113,10 @@ class Renderer {
         $pdf->setTextColor(...$item['font']['color']->array());
 
         $pdf->setXY($item['position']['x'], $item['position']['y']);
-		$pdf->multiCell($item['size']['width'], $item['font']['size'] + $$item['font']['line_spacing'], $text);
+		$pdf->multiCell($item['size']['width'], $item['font']['size'] + $item['font']['line_spacing'], $text);
 	}
 
-	public function renderLineItem($item, PdfGenerator $pdf) {
+	public function renderLineItem($item, Creator $pdf) {
 		$pdf->line(
             $item['position']['x'],
             $item['position']['y'],
@@ -125,7 +125,7 @@ class Renderer {
         );
 	}
 
-    public function renderRectItem($item, PdfGenerator $pdf) {
+    public function renderRectItem($item, Creator $pdf) {
         $pdf->setFillColor(...$item['fill']->array());
 
         $pdf->rect(
@@ -137,7 +137,7 @@ class Renderer {
         );
     }
 
-	public function renderImageItem($item, PdfGenerator $pdf) {
+	public function renderImageItem($item, Creator $pdf) {
 		$image = $item['image'];
 
 		if ($image == null) {
@@ -185,22 +185,22 @@ class Renderer {
     protected function applyDefaults($item) {
         $settings = array_merge_recursive_distinct($this->settings['defaults'], $item);
 
-        switch (strtolower($settings['align'] ?? '')) {
-            case 'left':
-                $settings['align'] = 'L';
-                break;
-            case 'right':
-                $settings['align'] = 'R';
-                break;
-            case 'center':
-                $settings['align'] = 'C';
-                break;
-            default:
-                $settings['align'] = 'L';
-        }
-
         foreach (['font', 'position', 'size'] as $key) {
             $settings[$key] = optional($settings[$key]);
+        }
+
+        switch (strtolower($settings['font']['align'] ?? '')) {
+            case 'left':
+                $settings['font']['align'] = 'L';
+                break;
+            case 'right':
+                $settings['font']['align'] = 'R';
+                break;
+            case 'center':
+                $settings['font']['align'] = 'C';
+                break;
+            default:
+                $settings['font']['align'] = 'L';
         }
 
         return optional($settings);
