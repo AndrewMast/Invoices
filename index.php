@@ -11,11 +11,11 @@ use Wujunze\Colors;
 
 class InvoiceGenerator {
     public function __construct() {
+        $this->clearInput();
+
         if (!file_exists(invoice_path())) {
             mkdir(invoice_path(), 0777, true);
         }
-
-        $this->clearInput();
 
         $this->colors = (object) [
             'blue' => new Color(47, 98, 253),
@@ -202,29 +202,91 @@ class InvoiceGenerator {
                     return $this->input($message, $color);
                 }
             } else if (is_string($validator)) {
+                if (!$this->isTypeSupported($validator)) {
+                    $validator = 'string';
+                }
+
+                $null = false;
+
                 if ($output === '' && $this->input_nullable) {
                     $output = $this->input_default;
-                } else if ($validator === 'string') {
-                    if ($output === '') {
+
+                    $null = true;
+                }
+
+                if ($validator === 'string') {
+                    if ($output === '' && $null === false) {
                         $this->error('Please enter a value.');
 
                         return $this->input($message, $color);
                     }
-                } else if ($validator === 'int') {
+                }
+
+                if (($validator === 'int' || $this->isTypeRange($validator)) && $output !== null) {
                     if (!ctype_digit($output)) {
                         $this->error('Please enter a valid whole number.');
 
                         return $this->input($message, $color);
-                    } else {
+                    } else if ($null === false) {
                         $output = intval($output);
                     }
-                } else if ($validator === 'bool') {
+                }
+
+                if ($validator === 'bool') {
                     if (in_array(strtolower($output), ['1', 'y', 'yes', 't', 'true'])) {
                         $output = true;
                     } else if (in_array(strtolower($output), ['0', 'n', 'no', 'f', 'false'])) {
                         $output = false;
-                    } else {
+                    } else if ($null === false) {
                         $this->error('Please enter a valid yes or no answer.');
+
+                        return $this->input($message, $color);
+                    }
+                }
+
+                if (preg_match('/^range:\s*(\d+)?\s*,\s*(\d+)?\s*(?:,((?:,,|[^,]*)*))?$/i', $validator, $matches) === 1) {
+                    $range = [
+                        empty($matches[1]) ? PHP_INT_MIN : intval($matches[1]),
+                        empty($matches[2]) ? PHP_INT_MAX : intval($matches[2]),
+                    ];
+
+                    sort($range);
+
+                    $error = sprintf('Please enter a valid whole number between %s and %s.', $range[0], $range[1]);
+
+                    if ($range[0] === PHP_INT_MIN) {
+                        $error = sprintf('Please enter a valid whole number equal to or below %s.', $range[1]);
+                    } else if ($range[1] === PHP_INT_MAX) {
+                        $error = sprintf('Please enter a valid whole number equal to or above %s.', $range[0]);
+                    }
+
+                    if (isset($matches[3])) {
+                        $error = str_replace(',,', ',', trim($matches[3]));
+                    }
+
+                    if (($output < $range[0] || $output > $range[1]) && $null === false) {
+                        $this->error($error);
+
+                        return $this->input($message, $color);
+                    }
+                }
+
+                if (preg_match('/^date:((?:,,|[^,]+)+)(?:,((?:,,|[^,]*)*))?(?:,((?:,,|[^,]*)*))?$/i', $validator, $matches) === 1) {
+                    $input_format = trim($matches[1]);
+                    $output_format = empty(trim($matches[2] ?? '')) ? $input_format : trim($matches[2]);
+
+                    $error = sprintf('Please enter a date in the format "%s".', $input_format);
+
+                    if (isset($matches[3])) {
+                        $error = str_replace(',,', ',', trim($matches[3]));
+                    }
+
+                    $date = DateTime::createFromFormat($input_format, $output);
+
+                    if ($date && $date->format($input_format) === $output) {
+                        $output = $date->format($output_format);
+                    } else {
+                        $this->error($error);
 
                         return $this->input($message, $color);
                     }
@@ -235,6 +297,18 @@ class InvoiceGenerator {
         $this->clearInput();
 
         return $output;
+    }
+
+    public function isTypeSupported(string $type) {
+        return in_array(strtolower($type), ['string', 'int', 'bool']) || $this->isTypeRange($type) || $this->isTypeDate($type);
+    }
+
+    public function isTypeRange($type) {
+        return preg_match('/^range:\s*(?:\d+,|,\d+|\d+\s*,\s*\d+)\s*(?:,(?:,,|[^,]*)*)?$/i', $type) === 1;
+    }
+
+    public function isTypeDate($type) {
+        return strlen($type) > 5 && preg_match('/^date:((?:,,|[^,]+)+)(?:,((?:,,|[^,]*)*))?(?:,((?:,,|[^,]*)*))?$/i', $type) === 1;
     }
 
     public function clearInput() {
@@ -327,41 +401,13 @@ class InvoiceGenerator {
     }
 
     public function prompt($prompt, string $type = null) {
-        $type = strtolower($type ?? $prompt->type ?? 'string');
+        $type = $type ?? $prompt->type ?? 'string';
 
-        $nullable = isset($prompt->default);
-        $default = $prompt->default ?? null;
-
-        $this->v('string', $nullable, $default);
-
-        if ($type === 'string' || $type === 'int' || $type === 'bool') {
-            $this->v($type, $nullable, $default);
-        } else if ($type === 'date') {
-            $input_format = $prompt->{'date-input-format'} ?? 'm/Y';
-            $output_format = $prompt->{'date-output-format'} ?? 'm/Y';
-
-            $error = $prompt->error ?? sprintf('Please enter a date in the format "%s".', $input_format);
-
-            $this->v(function(&$input, &$message) use ($error, $input_format, $output_format, $nullable, $default) {
-                if ($input === '' && $nullable === true) {
-                    $input = $default;
-                }
-
-                $date = DateTime::createFromFormat($input_format, $input);
-
-                if ($date && $date->format($input_format) === $input) {
-                    $input = $date->format($output_format);
-
-                    return true;
-                } else {
-                    $message = $error;
-
-                    return false;
-                }
-            });
-        }
-
-        return $this->sp(11)->input($prompt->prompt);
+        return $this->v(
+            $this->isTypeSupported($type) ? $type : 'string',
+            isset($prompt->default),
+            $prompt->default ?? null
+        )->sp(11)->input($prompt->prompt);
     }
 
     public function getRenderItems($client, $invoice_number) {
@@ -675,22 +721,3 @@ class InvoiceGenerator {
 }
 
 new InvoiceGenerator;
-
-print(
-    Colors::initColoredString('black', 'black') . PHP_EOL .
-    Colors::initColoredString('dark_gray', 'dark_gray') . PHP_EOL .
-    Colors::initColoredString('blue', 'blue') . PHP_EOL .
-    Colors::initColoredString('light_blue', 'light_blue') . PHP_EOL .
-    Colors::initColoredString('green', 'green') . PHP_EOL .
-    Colors::initColoredString('light_green', 'light_green') . PHP_EOL .
-    Colors::initColoredString('cyan', 'cyan') . PHP_EOL .
-    Colors::initColoredString('light_cyan', 'light_cyan') . PHP_EOL .
-    Colors::initColoredString('red', 'red') . PHP_EOL .
-    Colors::initColoredString('light_red', 'light_red') . PHP_EOL .
-    Colors::initColoredString('purple', 'purple') . PHP_EOL .
-    Colors::initColoredString('light_purple', 'light_purple') . PHP_EOL .
-    Colors::initColoredString('brown', 'brown') . PHP_EOL .
-    Colors::initColoredString('yellow', 'yellow') . PHP_EOL .
-    Colors::initColoredString('light_gray', 'light_gray') . PHP_EOL .
-    Colors::initColoredString('white', 'white') . PHP_EOL
-);
