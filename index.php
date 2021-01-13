@@ -46,23 +46,10 @@ class InvoiceGenerator {
 
         file_put_contents($filepath, $pdf->contents());
 
-        $this->printf('Successfully generated the invoice for %s!', $client->name, 'green')->nl();
-
-        $open = $this->v('bool', true, false)->input([
-            'Do you want to open the invoice? [',
-            ['y', 'brown'],
-            '/',
-            ['N', 'brown'],
-            ']'
-        ]);
-
-        $this->printBack(1, 42, $open ? 'Yes' : 'No');
-
-        if ($open) {
-            @exec(sprintf('start "" "%s"', $filepath));
-        } else {
-            @exec(sprintf('explorer.exe /select, "%s"', $filepath));
-        }
+        $this->printf('Successfully generated the invoice for %s!', $client->name, 'green')->nl()
+             ->v('bool', true, false, ['No', 'Yes'])
+             ->inputv($open, ['Do you want to open the invoice? [', ['y', 'brown'], '/', ['N', 'brown'], ']'])
+             ->command($open ? 'start "" "%s"' : 'explorer.exe /select, "%s"', $filepath);
     }
 
     public function loadSettings() {
@@ -84,13 +71,7 @@ class InvoiceGenerator {
             $this->printl($i + 1, 4, 'light_green')->sep()->print($client->name, 'cyan')->nl();
         }
 
-        $count = count($this->clients);
-
-        $index = $this->nl()->v(['int', function ($input, &$message) use ($count) {
-            $message = 'Please select a valid client.';
-
-            return $input >= 0 && $input <= $count;
-        }])->input('Select client');
+        $index = $this->nl()->v(sprintf('range:0,%d,Please select a valid client.', count($this->clients)))->input('Select client');
 
         if ($index === 0) {
             $id = $this->nl()->v(function($input, &$message) {
@@ -103,19 +84,11 @@ class InvoiceGenerator {
 
             $billed = $this->v()->printl('Billed To', 17, 'cyan')->input();
 
-            $invoice = $this->v('int', true)->sp(4)->input([
+            $this->v('int', true, 1, true)->sp(4)->inputv($invoice, [
                 'Invoice # (',
                 ['1', 'brown'],
                 ')'
-            ]);
-
-            if ($invoice === null) {
-                $invoice = 1;
-
-                $this->printBack(1, 21, $invoice);
-            }
-
-            $this->nl();
+            ])->nl();
 
             return [
                 'client' => (object) [
@@ -137,23 +110,15 @@ class InvoiceGenerator {
                  ->nl()->printl('Name', 16 + $count, 'cyan')->arrow()->print($client->name)
                  ->nl()->printl('Billed To', 16 + $count, 'cyan')->arrow()->print($client->{'billed-to'})->nl();
 
-            $invoice = $this->v('int', true)->sp(4)->input([
+            $this->v('int', true, $next_invoice, true)->sp(4)->inputv($invoice, [
                 'Invoice # (',
                 [$next_invoice, 'brown'],
                 ')',
-            ]);
-
-            if ($invoice === null) {
-                $invoice = $next_invoice;
-
-                $this->printBack(1, 20 + $count, $invoice);
-            }
+            ])->nl();
 
             if ($invoice === $next_invoice) {
                 $client->{'next-invoice-number'}++;
             }
-
-            $this->nl();
 
             return [
                 'client' => $client,
@@ -162,25 +127,48 @@ class InvoiceGenerator {
         }
     }
 
-    public function v($validator = 'string', $nullable = false, $default = null) {
+    public function v($validator = 'string', $nullable = false, $default = null, $print_default = false) {
         $this->inputting = false;
         $this->input_ongoing = true;
         $this->input_validator = $validator;
         $this->input_nullable = $nullable;
         $this->input_default = $default;
+        $this->input_print_default = $print_default;
         $this->input_prefix = '';
 
         return $this;
     }
 
+    public function clearInput() {
+        $this->inputting = false;
+        $this->input_ongoing = false;
+        $this->input_validator = 'string';
+        $this->input_nullable = false;
+        $this->input_default = null;
+        $this->input_print_default = false;
+        $this->input_prefix = '';
+
+        return $this;
+    }
+
+    public function inputv(&$variable = null, $message = '', string $color = 'cyan') {
+        $variable = $this->input($message, $color);
+
+        return $this;
+    }
+
     public function input($message = '', string $color = 'cyan') {
+        $this->print($message, $color);
+
         $this->inputting = true;
 
         if ($this->input_ongoing) {
             $this->print($this->input_prefix);
+
+            $message = '';
         }
 
-        $this->print($message, $color)->arrow();
+        $this->arrow();
 
         $stdin = fgets(STDIN);
 
@@ -196,7 +184,7 @@ class InvoiceGenerator {
             if (is_callable($validator)) {
                 $error = '';
 
-                if (!call_user_func_array($validator, [&$output, &$error])) {
+                if (call_user_func_array($validator, [&$output, &$error]) === false) {
                     $this->error($error);
 
                     return $this->input($message, $color);
@@ -223,7 +211,7 @@ class InvoiceGenerator {
                 }
 
                 if (($validator === 'int' || $this->isTypeRange($validator)) && $output !== null) {
-                    if (!ctype_digit($output)) {
+                    if (!is_int($output) && !ctype_digit($output)) {
                         $this->error('Please enter a valid whole number.');
 
                         return $this->input($message, $color);
@@ -294,6 +282,22 @@ class InvoiceGenerator {
             }
         }
 
+        if ($this->input_print_default !== false) {
+            $lines = explode(PHP_EOL, $this->strip($this->input_prefix));
+            $rows = count($lines);
+            $cols = strlen(trim(end($lines), "\r\n")) + 4;
+
+            $print = $output ?? '';
+
+            if (is_callable($this->input_print_default)) {
+                $print = call_user_func($this->input_print_default, $output);
+            } else if (is_array($this->input_print_default)) {
+                $print = $this->input_print_default[$print] ?? $print;
+            }
+
+            $this->printBack($rows, $cols, $print);
+        }
+
         $this->clearInput();
 
         return $output;
@@ -311,17 +315,6 @@ class InvoiceGenerator {
         return strlen($type) > 5 && preg_match('/^date:((?:,,|[^,]+)+)(?:,((?:,,|[^,]*)*))?(?:,((?:,,|[^,]*)*))?$/i', $type) === 1;
     }
 
-    public function clearInput() {
-        $this->inputting = false;
-        $this->input_ongoing = false;
-        $this->input_validator = 'string';
-        $this->input_nullable = false;
-        $this->input_default = null;
-        $this->input_prefix = '';
-
-        return $this;
-    }
-
     public function print($message = null, string $color = null) {
         if (is_array($message)) {
             foreach ($message as $part) {
@@ -335,7 +328,7 @@ class InvoiceGenerator {
             if ($message === null) {
                 $message = PHP_EOL;
             } else {
-                $message = Colors::initColoredString($message, $color);
+                $message = $this->color($message, $color);
             }
 
             if ($this->input_ongoing && !$this->inputting) {
@@ -346,6 +339,14 @@ class InvoiceGenerator {
         }
 
         return $this;
+    }
+
+    public function color(string $message, string $color = null) {
+        return Colors::initColoredString($message, $color);
+    }
+
+    public function strip(string $message) {
+        return preg_replace("/\033\[\d+(;\d+)?m/", '', $message);
     }
 
     public function printf(string $message, $parts = [], string $color = null) {
@@ -398,6 +399,12 @@ class InvoiceGenerator {
 
     public function money($value) {
         return '$' . $value;
+    }
+
+    public function command(string $command, ...$values) {
+        @exec(sprintf($command, ...$values));
+
+        return $this;
     }
 
     public function prompt($prompt, string $type = null) {
@@ -492,15 +499,13 @@ class InvoiceGenerator {
         }
 
         while ($items->count() < 10) {
-            $add = $this->v('bool', true, false)->printl($items->count() + 1, 4, 'light_green')->sep()->input([
+            $add = $this->v('bool', true, false, ['No', 'Yes'])->printl($items->count() + 1, 4, 'light_green')->sep()->input([
                 'Add an item to the invoice? [',
                 ['y', 'brown'],
                 '/',
                 ['N', 'brown'],
                 ']'
             ]);
-
-            $this->printBack(1, 44, $add ? 'Yes' : 'No');
 
             if ($add === true) {
                 $this->nl()->sp(7)->notice('Please fill out the following information:');
