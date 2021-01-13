@@ -127,13 +127,13 @@ class InvoiceGenerator {
         }
     }
 
-    public function v($validator = 'string', $nullable = false, $default = null, $print_default = false) {
+    public function v($validator = 'string', $nullable = false, $default = null, $printback = false) {
         $this->inputting = false;
         $this->input_ongoing = true;
         $this->input_validator = $validator;
         $this->input_nullable = $nullable;
         $this->input_default = $default;
-        $this->input_print_default = $print_default;
+        $this->input_printback = $printback;
         $this->input_prefix = '';
 
         return $this;
@@ -145,7 +145,7 @@ class InvoiceGenerator {
         $this->input_validator = 'string';
         $this->input_nullable = false;
         $this->input_default = null;
-        $this->input_print_default = false;
+        $this->input_printback = false;
         $this->input_prefix = '';
 
         return $this;
@@ -282,17 +282,17 @@ class InvoiceGenerator {
             }
         }
 
-        if ($this->input_print_default !== false) {
+        if ($this->input_printback !== false) {
             $lines = explode(PHP_EOL, $this->strip($this->input_prefix));
             $rows = count($lines);
             $cols = strlen(trim(end($lines), "\r\n")) + 4;
 
             $print = $output ?? '';
 
-            if (is_callable($this->input_print_default)) {
-                $print = call_user_func($this->input_print_default, $output);
-            } else if (is_array($this->input_print_default)) {
-                $print = $this->input_print_default[$print] ?? $print;
+            if (is_callable($this->input_printback)) {
+                $print = call_user_func($this->input_printback, $output);
+            } else if (is_array($this->input_printback)) {
+                $print = $this->input_printback[$print] ?? $print;
             }
 
             $this->printBack($rows, $cols, $print);
@@ -394,6 +394,12 @@ class InvoiceGenerator {
     }
 
     public function leading($value, $filler, $count) {
+        if (str_contains($value, "\033")) {
+            $strip = $this->strip($value);
+
+            return str_replace($strip, str_repeat($filler, max(0, $count - strlen($strip))) . $strip, $value);
+        }
+
         return sprintf("%'.{$filler}{$count}s", $value);
     }
 
