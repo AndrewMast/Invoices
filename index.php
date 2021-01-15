@@ -24,80 +24,147 @@ class InvoiceGenerator {
 
         $this->clients_file = output_path('clients.json');
 
-        $this->loadSettings();
+        $this->load();
 
-        $client_data = $this->chooseClient();
+        $this->cls()->startProgram();
 
-        $this->createPdf(
-            $client_data['client'],
-            $client_data['invoice-number']
-        );
-
-        $this->saveSettings();
+        $this->save();
     }
 
-    public function createPdf($client, int $invoice_number) {
-        $filename = sprintf('%s-%s.pdf', $client->id, $this->leading($invoice_number, '0', 6));
-        $filepath = invoice_path($filename);
+    public function startProgram() {
+        $this->notice('Actions:');
 
-        $generator = new Generator;
-
-        $pdf = $generator->render($this->getRenderItems($client, $invoice_number));
-
-        file_put_contents($filepath, $pdf->contents());
-
-        $this->printf('Successfully generated the invoice for %s!', $client->name, 'green')->nl()
-             ->v('bool', true, false, ['No', 'Yes'])
-             ->inputv($open, ['Do you want to open the invoice? [', ['y', 'brown'], '/', ['N', 'brown'], ']'])
-             ->command($open ? 'start "" "%s"' : 'explorer.exe /select, "%s"', $filepath);
-    }
-
-    public function loadSettings() {
-        $this->clients = file_exists($this->clients_file) ? json_decode(file_get_contents($this->clients_file)) : [];
-
-        return $this;
-    }
-
-    public function saveSettings() {
-        file_put_contents($this->clients_file, json_encode($this->clients, JSON_PRETTY_PRINT));
-
-        return $this;
-    }
-
-    public function chooseClient() {
-        $this->print('Clients:', 'cyan')->nl()->printl('0', 4, 'light_green')->sep()->print('Custom', 'cyan')->nl();
-
-        foreach ($this->clients as $i => $client) {
-            $this->printl($i + 1, 4, 'light_green')->sep()->print($client->name, 'cyan')->nl();
+        foreach (['Create Invoice', 'Create Client', 'Edit Client'] as $i => $a) {
+            $this->list($i + 1)->print($a, 'cyan')->nl();
         }
 
-        $index = $this->nl()->v(sprintf('range:0,%d,Please select a valid client.', count($this->clients)))->input('Select client');
+        $this->nl()->v('range:1,3,Please select a valid action.', true, 1, true)
+             ->inputv($action, ['Select an action (', ['1', 'brown'], ')'])->nl(2);
+
+        if ($action === 1) {
+            $this->createInvoice();
+        } else if ($action === 2) {
+            $this->createClient();
+        } else if ($action === 3) {
+            $this->editClient();
+        }
+
+        $this->nl(2)->startProgram();
+    }
+
+    public function editClient() {
+        $this->notice('Client List:');
+
+        foreach ($this->clients as $i => $client) {
+            $this->list($i + 1)->print($client->name, 'cyan')->nl();
+        }
+
+        $this->nl()->v(sprintf('range:1,%d,Please select a valid client.', count($this->clients)))
+             ->inputv($index, 'Select a client to edit')->nl(2);
+
+        $client = $this->clients[$index - 1];
+
+        $this->notice('Selected Client:')
+             ->printl('Id', 13, 'cyan')->arrow()->print($client->id)->nl()
+             ->printl('Name', 13, 'cyan')->arrow()->print($client->name)->nl()
+             ->printl('Billed To', 13, 'cyan')->arrow()->print($client->{'billed-to'})->nl()
+             ->printl('Invoice #', 13, 'cyan')->arrow()->print($client->{'next-invoice-number'})->nl();
+
+        $action = null;
+
+        while ($action !== 0) {
+            $this->nl(2)->notice('Client Actions:')
+                 ->list(0)->print('Back', 'cyan')->nl();
+
+            foreach (['Edit Invoice Items', 'Edit Client Settings', 'Delete Client'] as $i => $a) {
+                $this->list($i + 1)->print($a, 'cyan')->nl();
+            }
+
+            $this->nl()->v('range:0,3,Please select a valid action.')->inputv($action, 'Select a client action');
+
+            if ($action === 1) {
+                $this->nl()->editInvoiceItems($client);
+            } else if ($action === 2) {
+                $this->nl(2)->print(['Editing Client Settings (', ['Leave blank to keep old settings', 'cyan'], '):'], 'brown')->nl()
+                     ->v('string:lower', true, $client->id, true)->printl('Id', 13, 'cyan')->inputv($client->id)
+                     ->v('string', true, $client->name, true)->printl('Name', 13, 'cyan')->inputv($client->name)
+                     ->v('string', true, $client->{'billed-to'}, true)->printl('Billed To', 13, 'cyan')->inputv($client->{'billed-to'})
+                     ->v('int', true, $client->{'next-invoice-number'}, true)->printl('Invoice #', 13, 'cyan')->inputv($client->{'next-invoice-number'})
+                     ->save()
+                     ->nl()->printf('Edited the client "%s".', $client->name, 'green')->nl();
+            } else if ($action === 3) {
+                $this->nl()->v('bool', true, false, ['No', 'Yes'])->inputv(
+                    $confirm,
+                    ['Are you sure you want to delete this client? [', ['y', 'brown'], '/', ['N', 'brown'], ']']
+                )->nl();
+
+                if ($confirm) {
+                    array_splice($this->clients, $index - 1, 1);
+
+                    $this->save();
+
+                    $this->printf('Deleted the client "%s".', $client->name, 'red')->nl();
+
+                    break;
+                } else {
+                    $this->printf('Canceled the deletion of the client "%s".', $client->name, 'green')->nl();
+                }
+            }
+        }
+    }
+
+    public function createClient() {
+        $this->notice('Creating New Client')
+             ->v('string:lower')->printl('Id', 17, 'cyan')->inputv($id)
+             ->v()->printl('Name', 17, 'cyan')->inputv($name)
+             ->v()->printl('Billed To', 17, 'cyan')->inputv($billed)
+             ->v('int', true, 1, true)->sp(4)->inputv($invoice, ['Invoice # (', ['1', 'brown'], ')'])->nl()
+             ->v('bool', true, true, ['No', 'Yes'])
+             ->inputv($confirm, ['Are you sure you want to create this client? [', ['Y', 'brown'], '/', ['n', 'brown'], ']'])->nl();
+
+        if ($confirm) {
+            array_push($this->clients, (object) [
+                'id' => $id,
+                'name' => $name,
+                'billed-to' => $billed,
+                'next-invoice-number' => $invoice,
+                'items' => [],
+            ]);
+
+            $this->save();
+
+            $this->printf('Successfully created the client "%s"!', $name, 'green')->nl();
+        } else {
+            $this->printf('Canceled the creation of the client "%s".', $name, 'red')->nl();
+        }
+    }
+
+    public function createInvoice() {
+        $this->notice('Client List:')
+             ->list(0)->print('Custom', 'cyan')->nl();
+
+        foreach ($this->clients as $i => $client) {
+            $this->list($i + 1)->print($client->name, 'cyan')->nl();
+        }
+
+        $this->nl()->v(sprintf('range:0,%d,Please select a valid client.', count($this->clients)))
+             ->inputv($index, 'Select a client')->nl(2);
+
+        $client = null;
+        $invoice = null;
 
         if ($index === 0) {
-            $id = $this->nl()->v(function($input, &$message) {
-                $message = 'Please enter a string using only lowercase letters.';
+            $this->notice('Creating Custom Client for Invoice')
+                 ->v('string:lower')->printl('Id', 17, 'cyan')->inputv($id)
+                 ->v()->printl('Name', 17, 'cyan')->inputv($name)
+                 ->v()->printl('Billed To', 17, 'cyan')->inputv($billed)
+                 ->v('int', true, 1, true)->sp(4)->inputv($invoice, ['Invoice # (', ['1', 'brown'], ')'])->nl(2);
 
-                return ctype_lower($input);
-            })->printl('Id', 17, 'cyan')->input();
-
-            $name = $this->v()->printl('Name', 17, 'cyan')->input();
-
-            $billed = $this->v()->printl('Billed To', 17, 'cyan')->input();
-
-            $this->v('int', true, 1, true)->sp(4)->inputv($invoice, [
-                'Invoice # (',
-                ['1', 'brown'],
-                ')'
-            ])->nl();
-
-            return [
-                'client' => (object) [
-                    'id' => $id,
-                    'name' => $name,
-                    'billed-to' => $billed,
-                    'items' => [],
-                ],
-                'invoice-number' => $invoice,
+            $client = (object) [
+                'id' => $id,
+                'name' => $name,
+                'billed-to' => $billed,
+                'items' => [],
             ];
         } else {
             $client = $this->clients[$index - 1];
@@ -106,25 +173,42 @@ class InvoiceGenerator {
 
             $count = strlen($next_invoice);
 
-            $this->nl()->printl('Id', 16 + $count, 'cyan')->arrow()->print($client->id)
+            $this->notice('Using Existing Client for Invoice')
+                 ->nl()->printl('Id', 16 + $count, 'cyan')->arrow()->print($client->id)
                  ->nl()->printl('Name', 16 + $count, 'cyan')->arrow()->print($client->name)
-                 ->nl()->printl('Billed To', 16 + $count, 'cyan')->arrow()->print($client->{'billed-to'})->nl();
-
-            $this->v('int', true, $next_invoice, true)->sp(4)->inputv($invoice, [
-                'Invoice # (',
-                [$next_invoice, 'brown'],
-                ')',
-            ])->nl();
+                 ->nl()->printl('Billed To', 16 + $count, 'cyan')->arrow()->print($client->{'billed-to'})->nl()
+                 ->v('int', true, $next_invoice, true)->sp(4)->inputv($invoice, ['Invoice # (', [$next_invoice, 'brown'], ')'])->nl(2);
 
             if ($invoice === $next_invoice) {
                 $client->{'next-invoice-number'}++;
             }
-
-            return [
-                'client' => $client,
-                'invoice-number' => $invoice,
-            ];
         }
+
+        $filename = sprintf('%s-%s.pdf', $client->id, $this->leading($invoice, '0', 6));
+        $filepath = invoice_path($filename);
+
+        $generator = new Generator;
+
+        $pdf = $generator->render($this->getRenderItems($client, $invoice));
+
+        file_put_contents($filepath, $pdf->contents());
+
+        $this->printf('Successfully generated an invoice for the client "%s"!', $client->name, 'green')->nl(2)
+             ->v('bool', true, false, ['No', 'Yes'])
+             ->inputv($open, ['Do you want to open the invoice? [', ['y', 'brown'], '/', ['N', 'brown'], ']'])
+             ->command($open ? 'start "" "%s"' : 'explorer.exe /select, "%s"', $filepath);
+    }
+
+    public function load() {
+        $this->clients = file_exists($this->clients_file) ? json_decode(file_get_contents($this->clients_file)) : [];
+
+        return $this;
+    }
+
+    public function save() {
+        file_put_contents($this->clients_file, json_encode($this->clients, JSON_PRETTY_PRINT));
+
+        return $this;
     }
 
     public function v($validator = 'string', $nullable = false, $default = null, $printback = false) {
@@ -202,9 +286,13 @@ class InvoiceGenerator {
                     $null = true;
                 }
 
-                if ($validator === 'string') {
+                if ($validator === 'string' || $validator === 'string:lower') {
                     if ($output === '' && $null === false) {
                         $this->error('Please enter a value.');
+
+                        return $this->input($message, $color);
+                    } else if ($validator === 'string:lower' && !ctype_lower($output)) {
+                        $this->error('Please enter a string using only lowercase letters.');
 
                         return $this->input($message, $color);
                     }
@@ -283,10 +371,6 @@ class InvoiceGenerator {
         }
 
         if ($this->input_printback !== false) {
-            $lines = explode(PHP_EOL, $this->strip($this->input_prefix));
-            $rows = count($lines);
-            $cols = strlen(trim(end($lines), "\r\n")) + 4;
-
             $print = $output ?? '';
 
             if (is_callable($this->input_printback)) {
@@ -295,7 +379,7 @@ class InvoiceGenerator {
                 $print = $this->input_printback[$print] ?? $print;
             }
 
-            $this->printBack($rows, $cols, $print);
+            $this->printBack(1, $this->getInputWhitespace() + 4, $print);
         }
 
         $this->clearInput();
@@ -303,8 +387,16 @@ class InvoiceGenerator {
         return $output;
     }
 
+    public function getInputWhitespace() {
+        $lines = explode(PHP_EOL, $this->strip($this->input_prefix));
+
+        return strlen(trim(end($lines), "\r\n"));
+    }
+
     public function isTypeSupported(string $type) {
-        return in_array(strtolower($type), ['string', 'int', 'bool']) || $this->isTypeRange($type) || $this->isTypeDate($type);
+        return in_array(strtolower($type), ['string', 'string:lower', 'int', 'bool'])
+            || $this->isTypeRange($type)
+            || $this->isTypeDate($type);
     }
 
     public function isTypeRange($type) {
@@ -374,6 +466,10 @@ class InvoiceGenerator {
     }
 
     public function error(string $message) {
+        if ($this->input_ongoing) {
+            $this->sp($this->getInputWhitespace())->arrow('red');
+        }
+
         return $this->print($message, 'red')->nl();
     }
 
@@ -385,12 +481,16 @@ class InvoiceGenerator {
         return $this->print($message, 'brown')->nl();
     }
 
-    public function arrow() {
-        return $this->print(' >> ', 'dark_gray');
+    public function arrow(string $color = 'dark_gray') {
+        return $this->print(' >> ', $color);
     }
 
-    public function sep() {
-        return $this->print(' - ', 'dark_gray');
+    public function sep(string $color = 'dark_gray') {
+        return $this->print(' - ', $color);
+    }
+
+    public function list(int $index, string $prefix = '') {
+        return $this->printl($prefix . $index, 4, 'light_green')->sep();
     }
 
     public function leading($value, $filler, $count) {
@@ -430,10 +530,10 @@ class InvoiceGenerator {
 
         $client_items = collect()->wrap($client->items ?? [])->take(10)->values();
 
-        $this->print('Invoice Items:', 'cyan')->nl();
+        $this->notice('Invoice Items:');
 
         foreach ($client_items as $i => $item) {
-            $this->printl($i + 1, 4, 'light_green')->sep()->print($item->name, 'cyan')->nl();
+            $this->list($i + 1, '#')->print($item->name, 'cyan')->nl();
 
             $title = $item->title ?? '';
             $subtitle = $item->subtitle ?? '';
@@ -452,7 +552,7 @@ class InvoiceGenerator {
                 }
 
                 if (!isset($item->price)) {
-                    $price = $this->v('int')->printl('Price', 17, 'cyan')->input();
+                    $price = $this->v('int', false, null, [$this, 'money'])->printl('Price', 17, 'cyan')->input();
                 }
 
                 if (!isset($item->quantity)) {
@@ -471,7 +571,7 @@ class InvoiceGenerator {
                 foreach ($prompts as $name => $prompt) {
                     $replace = $this->prompt($prompt);
 
-                    $searches[] = sprintf('{{ %s }}', $name);
+                    $searches[] = sprintf('<<%s>>', $name);
                     $replacements[] = $replace;
                 }
 
@@ -500,26 +600,28 @@ class InvoiceGenerator {
                 $this->printl('Subtitle', 17, 'cyan')->arrow()->print($subtitle)->nl();
             }
 
-            $this->printl('Price', 17, 'cyan')->arrow()->print($price)->nl()
+            $this->printl('Price', 17, 'cyan')->arrow()->print($this->money($price))->nl()
                  ->printl('Quantity', 17, 'cyan')->arrow()->print($quantity)->nl(2);
         }
 
         while ($items->count() < 10) {
-            $add = $this->v('bool', true, false, ['No', 'Yes'])->printl($items->count() + 1, 4, 'light_green')->sep()->input([
-                'Add an item to the invoice? [',
-                ['y', 'brown'],
-                '/',
-                ['N', 'brown'],
-                ']'
-            ]);
+            $default = false;
+            $printed_defaults = [['y', 'brown'], '/', ['N', 'brown']];
+
+            if ($items->count() === 0) {
+                $default = true;
+                $printed_defaults = [['Y', 'brown'], '/', ['n', 'brown']];
+            }
+
+            $this->v('bool', true, $default, ['No', 'Yes'])->list($items->count() + 1, '#')
+                 ->inputv($add, ['Add an item to the invoice? [', ...$printed_defaults, ']']);
 
             if ($add === true) {
-                $this->nl()->sp(7)->notice('Please fill out the following information:');
-
-                $title = $this->v()->printl('Title', 17, 'cyan')->input();
-                $subtitle = $this->v('string', true)->printl('Subtitle', 17, 'cyan')->input();
-                $price = $this->v('int')->printl('Price', 17, 'cyan')->input();
-                $quantity = $this->v('int')->printl('Quantity', 17, 'cyan')->input();
+                $this->nl()->sp(7)->notice('Please fill out the following information:')
+                     ->v()->printl('Title', 17, 'cyan')->inputv($title)
+                     ->v('string', true)->printl('Subtitle', 17, 'cyan')->inputv($subtitle)
+                     ->v('int', false, null, [$this, 'money'])->printl('Price', 17, 'cyan')->inputv($price)
+                     ->v('int')->printl('Quantity', 17, 'cyan')->inputv($quantity);
 
                 $total += $price * $quantity;
 
