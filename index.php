@@ -9,26 +9,561 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Wujunze\Colors;
 
-class InvoiceGenerator {
-    public function __construct() {
-        $this->clearInput();
+class Menu {
+    public function __construct($parent, $title, $prompt = null, $error = null) {
+        if ($parent instanceof Program) {
+            $this->parent = null;
+            $this->program = $parent;
+        } else if ($parent instanceof self) {
+            $this->parent = $parent;
+            $this->program = $parent->program;
+        }
 
+        $this->title = $title;
+        $this->prompt = $prompt ?? $title;
+        $this->error = $error ?? 'Invalid option.';
+        $this->items = collect();
+        $this->default = false;
+    }
+
+    public function items(...$items) {
+        $this->items->push(...$items);
+
+        return $this;
+    }
+
+    public function item(MenuItem $item) {
+        $this->items->push($item);
+
+        return $this;
+    }
+
+    public function default($default = false) {
+        $this->default = $default;
+
+        return $this;
+    }
+
+    public function __call($name, $arguments) {
+        if (in_array($name, ['input'])) {
+            return $this->program->{$name}(...$arguments);
+        } else if (method_exists($this->program->output, $name)) {
+            $output = $this->program->output->{$name}(...$arguments);
+
+            return $output === $this->program->output ? $this : $output;
+        }
+
+        throw new \Exception("Unknown method '$name'");
+    }
+
+    public function show() {
+        $this->clear()->print($this->title, 'brown')->print(':', 'brown')->nl()
+             ->printl('0', 4, 'light_green')->sep()->print('Exit', 'red')->nl();
+
+        foreach ($this->items as $i => $item) {
+            $this->printl($i + 1, 4, 'light_green')->sep()->print($item->message, 'cyan')->nl();
+        }
+
+        $i = $this->input()->get();
+
+        $range = sprintf(
+            'range:%d,%d,%s',
+            0,
+            count($this->items),
+            $this->error
+        );
+
+        $this->nl()->input($range, $this->default !== false, $this->default, true)
+             ->message($this->prompt)
+             ->message($this->default === false ? [] : [' (', [$this->default, 'brown'], ')'])
+             ->set($index)->nl();
+
+        if ($index === 0) {
+            if ($this->parent === null) {
+                $this->program->exit();
+            } else {
+                $this->parent->show();
+            }
+        } else {
+            $this->items->get($index - 1)->call();
+        }
+    }
+}
+
+class MenuItem {
+    public function __construct($message, $action) {
+        $this->message = $message;
+        $this->action = $action;
+    }
+
+    public function call() {
+        if ($this->action instanceof Menu) {
+            return $this->action->show();
+        } else if (is_callable($this->action)) {
+            call_user_func($this->action);
+        } else {
+            throw new \Exception('Invalid action!');
+        }
+    }
+}
+
+class Program {
+    public function __construct() {
+        $this->input = null;
+        $this->output = new Output($this);
+
+        $this->load();
+
+        $menu = new Menu($this, 'Select Client');
+
+        $menu->item(new MenuItem([['Create new client', 'green']], $this->createNewClientMenu($menu)));
+
+        foreach ($this->clients as $client) {
+            $menu->item(new MenuItem($client->name, $this->createClientMenu($menu, $client)));
+        }
+
+        $menu->show();
+    }
+
+    public function createNewClientMenu(Menu $parent) {
+        //
+    }
+
+    public function createClientMenu(Menu $parent, $client) {
+        $menu = new Menu($parent, ['Actions for ', [$client->name, 'green']], 'Select action', 'Please select a valid action');
+
+        $next = $client->{'next-invoice-number'};
+
+        $menu->items(
+            new MenuItem(['Create Next Invoice (', [$next, 'brown'], ')'], $this->createInvoiceMenu($menu, $client, $next)),
+            new MenuItem(['Create Custom Invoice'], $this->createInvoiceMenu($menu, $client)),
+            new MenuItem(['Edit Client'], $this->createEditClientMenu($menu, $client))
+        );
+
+        $menu->default(1);
+
+        return $menu;
+    }
+
+    public function createInvoiceMenu(Menu $parent, $client, $next = null) {
+        //
+    }
+
+    public function createEditClientMenu(Menu $parent, $client) {
+        //
+    }
+
+    public function load() {
         if (!file_exists(invoice_path())) {
             mkdir(invoice_path(), 0777, true);
         }
 
-        $this->colors = (object) [
-            'blue' => new Color(47, 98, 253),
-            'gray' => new Color(145, 156, 158),
-        ];
-
         $this->clients_file = output_path('clients.json');
 
-        $this->load();
+        $this->clients = new Collection(file_exists($this->clients_file) ? json_decode(file_get_contents($this->clients_file)) : []);
+    }
 
-        $this->cls()->startProgram();
+    public function save() {
+        file_put_contents($this->clients_file, json_encode($this->clients->all(), JSON_PRETTY_PRINT));
 
-        $this->save();
+        return $this;
+    }
+
+    public function exit() {
+        $this->print('Exiting...', 'red')->nl();
+
+        die;
+    }
+
+    public function input(string $validator = 'string', $nullable = false, $default = null, $printback = false) {
+        return $this->input = new Input($this, $validator, $nullable, $default, $printback);
+    }
+
+    public function clearInput() {
+        $this->input = null;
+
+        return $this;
+    }
+
+    public function __call($name, $arguments) {
+        if (method_exists($this->output, $name)) {
+            $this->output->{$name}(...$arguments);
+
+            return $this;
+        }
+
+        throw new \Exception("Unknown method '$name'");
+    }
+}
+
+class Input {
+    public function __construct(Program $program, string $validator = 'string', $nullable = false, $default = null, $printback = false) {
+        $this->program = $program;
+
+        $this->inputting = false;
+        $this->validator = $validator;
+        $this->nullable = $nullable;
+        $this->default = $default;
+        $this->printback = $printback;
+        $this->message = '';
+    }
+
+    public function __call($name, $arguments) {
+        if (method_exists($this->program->output, $name)) {
+            $output = $this->program->output->{$name}(...$arguments);
+
+            return $output === $this->program->output ? $this : $output;
+        }
+
+        throw new \Exception("Unknown method '$name'");
+    }
+
+    public function message($message, string $color = 'cyan') {
+        return $this->print($message, $color);
+    }
+
+    public function set(&$variable = null) {
+        $variable = $this->get();
+
+        return $this;
+    }
+
+    public function get() {
+        $this->inputting = true;
+
+        $this->print($this->message);
+
+        $this->arrow();
+
+        $stdin = fgets(STDIN);
+
+        if ($stdin === false) {
+            die; // Ctrl+C
+        }
+
+        $output = trim($stdin);
+
+        $validators = Arr::wrap($this->validator);
+
+        foreach ($validators as $validator) {
+            if (is_callable($validator)) {
+                $error = '';
+
+                if (call_user_func_array($validator, [&$output, &$error]) === false) {
+                    $this->error($error);
+
+                    return $this->get();
+                }
+            } else if (is_string($validator)) {
+                if (!$this->isTypeSupported($validator)) {
+                    $validator = 'string';
+                }
+
+                $null = false;
+
+                if ($output === '' && $this->nullable) {
+                    $output = $this->default;
+
+                    $null = true;
+                }
+
+                if ($validator === 'string' || $validator === 'string:lower') {
+                    if ($output === '' && $null === false) {
+                        $this->error('Please enter a value.');
+
+                        return $this->get();
+                    } else if ($validator === 'string:lower' && !ctype_lower($output)) {
+                        $this->error('Please enter a string using only lowercase letters.');
+
+                        return $this->get();
+                    }
+                }
+
+                if (($validator === 'int' || $this->isTypeRange($validator)) && $output !== null) {
+                    if (!is_int($output) && !ctype_digit($output)) {
+                        $this->error('Please enter a valid whole number.');
+
+                        return $this->get();
+                    } else if ($null === false) {
+                        $output = intval($output);
+                    }
+                }
+
+                if ($validator === 'bool') {
+                    if (in_array(strtolower($output), ['1', 'y', 'yes', 't', 'true'])) {
+                        $output = true;
+                    } else if (in_array(strtolower($output), ['0', 'n', 'no', 'f', 'false'])) {
+                        $output = false;
+                    } else if ($null === false) {
+                        $this->error('Please enter a valid yes or no answer.');
+
+                        return $this->get();
+                    }
+                }
+
+                if (preg_match('/^range:\s*(\d+)?\s*,\s*(\d+)?\s*(?:,((?:,,|[^,]*)*))?$/i', $validator, $matches) === 1) {
+                    $range = [
+                        empty($matches[1]) ? PHP_INT_MIN : intval($matches[1]),
+                        empty($matches[2]) ? PHP_INT_MAX : intval($matches[2]),
+                    ];
+
+                    sort($range);
+
+                    $error = sprintf('Please enter a valid whole number between %s and %s.', $range[0], $range[1]);
+
+                    if ($range[0] === PHP_INT_MIN) {
+                        $error = sprintf('Please enter a valid whole number equal to or below %s.', $range[1]);
+                    } else if ($range[1] === PHP_INT_MAX) {
+                        $error = sprintf('Please enter a valid whole number equal to or above %s.', $range[0]);
+                    }
+
+                    if (isset($matches[3])) {
+                        $error = str_replace(',,', ',', trim($matches[3]));
+                    }
+
+                    if (($output < $range[0] || $output > $range[1]) && $null === false) {
+                        $this->error($error);
+
+                        return $this->get();
+                    }
+                }
+
+                if (preg_match('/^date:((?:,,|[^,]+)+)(?:,((?:,,|[^,]*)*))?(?:,((?:,,|[^,]*)*))?$/i', $validator, $matches) === 1) {
+                    $input_format = trim($matches[1]);
+                    $output_format = empty(trim($matches[2] ?? '')) ? $input_format : trim($matches[2]);
+
+                    $error = sprintf('Please enter a date in the format "%s".', $input_format);
+
+                    if (isset($matches[3])) {
+                        $error = $this->typeUnescape(trim($matches[3]));
+                    }
+
+                    $date = DateTime::createFromFormat($input_format, $output);
+
+                    if ($date && $date->format($input_format) === $output) {
+                        $output = $date->format($output_format);
+                    } else {
+                        $this->error($error);
+
+                        return $this->get();
+                    }
+                }
+
+                if (preg_match('/^array:\s*(i|s)\s*,\s*((?:,,|[^,]*)*)\s*,\s*(.*)\s*$/i', $validator, $matches) === 1) {
+                    $settings = strtolower(trim($matches[1]));
+                    $error = $this->typeUnescape(trim($matches[2]));
+
+                    if (empty($error)) {
+                        $error = 'Please select an item in the array.';
+                    }
+
+                    $array_string = trim($matches[3]);
+
+                    if (str_contains($settings, 'i')) {
+                        $array_string = strtolower($array_string);
+                        $output = strtolower($output);
+                    }
+
+                    $array = array_map('trim', explode(',', $array_string));
+
+                    if (!in_array($output, $array)) {
+                        $this->error($error);
+
+                        return $this->get();
+                    }
+                }
+            }
+        }
+
+        if ($this->printback !== false) {
+            $print = $output ?? '';
+
+            if (is_callable($this->printback)) {
+                $print = call_user_func($this->printback, $output);
+            } else if (is_array($this->printback)) {
+                $print = $this->printback[$print] ?? $print;
+            }
+
+            $this->printBack(1, $this->getWhitespaceCount() + 4, $print);
+        }
+
+        $this->program->clearInput();
+
+        return $output;
+    }
+
+    public function getWhitespaceCount() {
+        $lines = explode(PHP_EOL, $this->strip($this->message));
+
+        return strlen(trim(end($lines), "\r\n"));
+    }
+
+    public static function isTypeSupported(string $type) {
+        return in_array(strtolower($type), ['string', 'string:lower', 'int', 'bool'])
+            || static::isTypeRange($type)
+            || static::isTypeDate($type)
+            || static::isTypeArray($type);
+    }
+
+    public static function isTypeRange($type) {
+        return preg_match('/^range:\s*(?:\d+,|,\d+|\d+\s*,\s*\d+)\s*(?:,(?:,,|[^,]*)*)?$/i', $type) === 1;
+    }
+
+    public static function isTypeDate($type) {
+        return strlen($type) > 5 && preg_match('/^date:((?:,,|[^,]+)+)(?:,((?:,,|[^,]*)*))?(?:,((?:,,|[^,]*)*))?$/i', $type) === 1;
+    }
+
+    public static function isTypeArray($type) {
+        return preg_match('/^array:\s*(i|s)\s*,\s*((?:,,|[^,]*)*)\s*,\s*(.*)\s*$/i', $type) === 1;
+    }
+
+    public static function typeEscape(string $message) {
+        return str_replace(',', ',,', $message);
+    }
+
+    public static function typeUnescape(string $message) {
+        return str_replace(',,', ',', $message);
+    }
+}
+
+class Output {
+    public function __construct(Program $program) {
+        $this->program = $program;
+    }
+
+    public function print($message = null, string $color = null) {
+        if (is_array($message)) {
+            foreach ($message as $part) {
+                if (is_array($part)) {
+                    $this->print(...$part);
+                } else {
+                    $this->print($part, $color);
+                }
+            }
+        } else {
+            if ($message === null) {
+                $message = PHP_EOL;
+            } else {
+                $message = $this->color($message, $color);
+            }
+
+            if ($this->program->input !== null && !$this->program->input->inputting) {
+                $this->program->input->message .= $message;
+            } else {
+                fwrite(STDOUT, $message);
+            }
+        }
+
+        return $this;
+    }
+
+    public function color($message, string $color = null) {
+        if (is_array($message)) {
+            return array_map(function($m) use ($color) {
+                $this->color($m, $color);
+            }, $message);
+        }
+
+        return Colors::initColoredString($message, $color);
+    }
+
+    public function strip(string $message) {
+        return preg_replace("/\033\[\d+(;\d+)?m/", '', $message);
+    }
+
+    public function printf(string $message, $parts = [], string $color = null) {
+        return $this->print(sprintf($message, ...Arr::wrap($parts)), $color);
+    }
+
+    public function printl(string $message, int $count, string $color = null) {
+        return $this->print($this->leading($message, ' ', $count), $color);
+    }
+
+    public function printBack($rows, $cols, $message, string $color = null) {
+        return $this->printf("\033[s\033[%dA\033[%dC%s\033[u", [$rows, $cols, $message], $color);
+    }
+
+    public function clear() {
+        return $this->print("\033[H\033[J");
+    }
+
+    public function nl(int $count = 1) {
+        return $this->print(str_repeat(PHP_EOL, $count));
+    }
+
+    public function sp(int $count = 1) {
+        return $this->print(str_repeat(' ', $count));
+    }
+
+    public function error(string $message) {
+        if ($this->program->input !== null) {
+            $this->sp($this->program->input->getWhitespaceCount())->arrow('red');
+        }
+
+        return $this->print($message, 'red')->nl();
+    }
+
+    public function success(string $message) {
+        return $this->print($message, 'green')->nl();
+    }
+
+    public function notice(string $message) {
+        return $this->print($message, 'brown')->nl();
+    }
+
+    public function arrow(string $color = 'dark_gray') {
+        return $this->print(' >> ', $color);
+    }
+
+    public function sep(string $color = 'dark_gray') {
+        return $this->print(' - ', $color);
+    }
+
+    public function listItem($index, string $prefix = '') {
+        return $this->printl($prefix . $index, 4, 'light_green')->sep();
+    }
+
+    public function list(string $title, $prompt, string $error, array $actions, $default = false, $zero_action = false) {
+        $this->notice($title);
+
+        if ($zero_action !== false) {
+            $this->listItem(0)->print($zero_action, 'cyan')->nl();
+        }
+
+        $is_assoc = Arr::isAssoc($actions);
+
+        foreach ($actions as $i => $a) {
+            $this->listItem($is_assoc ? $i : $i + 1)->print($a, 'cyan')->nl();
+        }
+
+        $this->nl()->v(sprintf(
+            'range:%d,%d,%s',
+            $zero_action === false ? 1 : 0,
+            count($actions),
+            $error
+        ), $default !== false, $default, true)->inputv($index, $prompt);
+
+        return $index;
+    }
+
+    public function leading($value, $filler, $count) {
+        if (str_contains($value, "\033")) {
+            $strip = $this->strip($value);
+
+            return str_replace($strip, str_repeat($filler, max(0, $count - strlen($strip))) . $strip, $value);
+        }
+
+        return sprintf("%'.{$filler}{$count}s", $value);
+    }
+
+    public function money($value) {
+        return '$' . $value;
+    }
+}
+
+class InvoiceGenerator {
+    public function __construct() {
+        $this->clear()->startProgram();
     }
 
     public function startProgram() {
@@ -364,380 +899,6 @@ class InvoiceGenerator {
              ->command($open ? 'start "" "%s"' : 'explorer.exe /select, "%s"', $filepath);
     }
 
-    public function load() {
-        $this->clients = new Collection(file_exists($this->clients_file) ? json_decode(file_get_contents($this->clients_file)) : []);
-
-        return $this;
-    }
-
-    public function save() {
-        file_put_contents($this->clients_file, json_encode($this->clients->all(), JSON_PRETTY_PRINT));
-
-        return $this;
-    }
-
-    public function v($validator = 'string', $nullable = false, $default = null, $printback = false) {
-        $this->inputting = false;
-        $this->input_ongoing = true;
-        $this->input_validator = $validator;
-        $this->input_nullable = $nullable;
-        $this->input_default = $default;
-        $this->input_printback = $printback;
-        $this->input_prefix = '';
-
-        return $this;
-    }
-
-    public function clearInput() {
-        $this->inputting = false;
-        $this->input_ongoing = false;
-        $this->input_validator = 'string';
-        $this->input_nullable = false;
-        $this->input_default = null;
-        $this->input_printback = false;
-        $this->input_prefix = '';
-
-        return $this;
-    }
-
-    public function inputv(&$variable = null, $message = '', string $color = 'cyan') {
-        $variable = $this->input($message, $color);
-
-        return $this;
-    }
-
-    public function input($message = '', string $color = 'cyan') {
-        $this->print($message, $color);
-
-        $this->inputting = true;
-
-        if ($this->input_ongoing) {
-            $this->print($this->input_prefix);
-
-            $message = '';
-        }
-
-        $this->arrow();
-
-        $stdin = fgets(STDIN);
-
-        if ($stdin === false) {
-            die; // Ctrl+C
-        }
-
-        $output = trim($stdin);
-
-        $validators = Arr::wrap($this->input_ongoing ? $this->input_validator : 'string');
-
-        foreach ($validators as $validator) {
-            if (is_callable($validator)) {
-                $error = '';
-
-                if (call_user_func_array($validator, [&$output, &$error]) === false) {
-                    $this->error($error);
-
-                    return $this->input($message, $color);
-                }
-            } else if (is_string($validator)) {
-                if (!$this->isTypeSupported($validator)) {
-                    $validator = 'string';
-                }
-
-                $null = false;
-
-                if ($output === '' && $this->input_nullable) {
-                    $output = $this->input_default;
-
-                    $null = true;
-                }
-
-                if ($validator === 'string' || $validator === 'string:lower') {
-                    if ($output === '' && $null === false) {
-                        $this->error('Please enter a value.');
-
-                        return $this->input($message, $color);
-                    } else if ($validator === 'string:lower' && !ctype_lower($output)) {
-                        $this->error('Please enter a string using only lowercase letters.');
-
-                        return $this->input($message, $color);
-                    }
-                }
-
-                if (($validator === 'int' || $this->isTypeRange($validator)) && $output !== null) {
-                    if (!is_int($output) && !ctype_digit($output)) {
-                        $this->error('Please enter a valid whole number.');
-
-                        return $this->input($message, $color);
-                    } else if ($null === false) {
-                        $output = intval($output);
-                    }
-                }
-
-                if ($validator === 'bool') {
-                    if (in_array(strtolower($output), ['1', 'y', 'yes', 't', 'true'])) {
-                        $output = true;
-                    } else if (in_array(strtolower($output), ['0', 'n', 'no', 'f', 'false'])) {
-                        $output = false;
-                    } else if ($null === false) {
-                        $this->error('Please enter a valid yes or no answer.');
-
-                        return $this->input($message, $color);
-                    }
-                }
-
-                if (preg_match('/^range:\s*(\d+)?\s*,\s*(\d+)?\s*(?:,((?:,,|[^,]*)*))?$/i', $validator, $matches) === 1) {
-                    $range = [
-                        empty($matches[1]) ? PHP_INT_MIN : intval($matches[1]),
-                        empty($matches[2]) ? PHP_INT_MAX : intval($matches[2]),
-                    ];
-
-                    sort($range);
-
-                    $error = sprintf('Please enter a valid whole number between %s and %s.', $range[0], $range[1]);
-
-                    if ($range[0] === PHP_INT_MIN) {
-                        $error = sprintf('Please enter a valid whole number equal to or below %s.', $range[1]);
-                    } else if ($range[1] === PHP_INT_MAX) {
-                        $error = sprintf('Please enter a valid whole number equal to or above %s.', $range[0]);
-                    }
-
-                    if (isset($matches[3])) {
-                        $error = str_replace(',,', ',', trim($matches[3]));
-                    }
-
-                    if (($output < $range[0] || $output > $range[1]) && $null === false) {
-                        $this->error($error);
-
-                        return $this->input($message, $color);
-                    }
-                }
-
-                if (preg_match('/^date:((?:,,|[^,]+)+)(?:,((?:,,|[^,]*)*))?(?:,((?:,,|[^,]*)*))?$/i', $validator, $matches) === 1) {
-                    $input_format = trim($matches[1]);
-                    $output_format = empty(trim($matches[2] ?? '')) ? $input_format : trim($matches[2]);
-
-                    $error = sprintf('Please enter a date in the format "%s".', $input_format);
-
-                    if (isset($matches[3])) {
-                        $error = $this->typeUnescape(trim($matches[3]));
-                    }
-
-                    $date = DateTime::createFromFormat($input_format, $output);
-
-                    if ($date && $date->format($input_format) === $output) {
-                        $output = $date->format($output_format);
-                    } else {
-                        $this->error($error);
-
-                        return $this->input($message, $color);
-                    }
-                }
-
-                if (preg_match('/^array:\s*(i|s)\s*,\s*((?:,,|[^,]*)*)\s*,\s*(.*)\s*$/i', $validator, $matches) === 1) {
-                    $settings = strtolower(trim($matches[1]));
-                    $error = $this->typeUnescape(trim($matches[2]));
-
-                    if (empty($error)) {
-                        $error = 'Please select an item in the array.';
-                    }
-
-                    $array_string = trim($matches[3]);
-
-                    if (str_contains($settings, 'i')) {
-                        $array_string = strtolower($array_string);
-                        $output = strtolower($output);
-                    }
-
-                    $array = array_map('trim', explode(',', $array_string));
-
-                    if (!in_array($output, $array)) {
-                        $this->error($error);
-
-                        return $this->input($message, $color);
-                    }
-                }
-            }
-        }
-
-        if ($this->input_printback !== false) {
-            $print = $output ?? '';
-
-            if (is_callable($this->input_printback)) {
-                $print = call_user_func($this->input_printback, $output);
-            } else if (is_array($this->input_printback)) {
-                $print = $this->input_printback[$print] ?? $print;
-            }
-
-            $this->printBack(1, $this->getInputWhitespace() + 4, $print);
-        }
-
-        $this->clearInput();
-
-        return $output;
-    }
-
-    public function getInputWhitespace() {
-        $lines = explode(PHP_EOL, $this->strip($this->input_prefix));
-
-        return strlen(trim(end($lines), "\r\n"));
-    }
-
-    public function isTypeSupported(string $type) {
-        return in_array(strtolower($type), ['string', 'string:lower', 'int', 'bool'])
-            || $this->isTypeRange($type)
-            || $this->isTypeDate($type)
-            || $this->isTypeArray($type);
-    }
-
-    public function isTypeRange($type) {
-        return preg_match('/^range:\s*(?:\d+,|,\d+|\d+\s*,\s*\d+)\s*(?:,(?:,,|[^,]*)*)?$/i', $type) === 1;
-    }
-
-    public function isTypeDate($type) {
-        return strlen($type) > 5 && preg_match('/^date:((?:,,|[^,]+)+)(?:,((?:,,|[^,]*)*))?(?:,((?:,,|[^,]*)*))?$/i', $type) === 1;
-    }
-
-    public function isTypeArray($type) {
-        return preg_match('/^array:\s*(i|s)\s*,\s*((?:,,|[^,]*)*)\s*,\s*(.*)\s*$/i', $type) === 1;
-    }
-
-    public function typeEscape(string $message) {
-        return str_replace(',', ',,', $message);
-    }
-
-    public function typeUnescape(string $message) {
-        return str_replace(',,', ',', $message);
-    }
-
-    public function print($message = null, string $color = null) {
-        if (is_array($message)) {
-            foreach ($message as $part) {
-                if (is_array($part)) {
-                    $this->print(...$part);
-                } else {
-                    $this->print($part, $color);
-                }
-            }
-        } else {
-            if ($message === null) {
-                $message = PHP_EOL;
-            } else {
-                $message = $this->color($message, $color);
-            }
-
-            if ($this->input_ongoing && !$this->inputting) {
-                $this->input_prefix .= $message;
-            } else {
-                fwrite(STDOUT, $message);
-            }
-        }
-
-        return $this;
-    }
-
-    public function color($message, string $color = null) {
-        if (is_array($message)) {
-            return array_map(function($m) use ($color) {
-                $this->color($m, $color);
-            }, $message);
-        }
-
-        return Colors::initColoredString($message, $color);
-    }
-
-    public function strip(string $message) {
-        return preg_replace("/\033\[\d+(;\d+)?m/", '', $message);
-    }
-
-    public function printf(string $message, $parts = [], string $color = null) {
-        return $this->print(sprintf($message, ...Arr::wrap($parts)), $color);
-    }
-
-    public function printl(string $message, int $count, string $color = null) {
-        return $this->print($this->leading($message, ' ', $count), $color);
-    }
-
-    public function printBack($rows, $cols, $message, string $color = null) {
-        return $this->printf("\033[s\033[%dA\033[%dC%s\033[u", [$rows, $cols, $message], $color);
-    }
-
-    public function cls() {
-        return $this->print("\033[H\033[J");
-    }
-
-    public function nl(int $count = 1) {
-        return $this->print(str_repeat(PHP_EOL, $count));
-    }
-
-    public function sp(int $count = 1) {
-        return $this->print(str_repeat(' ', $count));
-    }
-
-    public function error(string $message) {
-        if ($this->input_ongoing) {
-            $this->sp($this->getInputWhitespace())->arrow('red');
-        }
-
-        return $this->print($message, 'red')->nl();
-    }
-
-    public function success(string $message) {
-        return $this->print($message, 'green')->nl();
-    }
-
-    public function notice(string $message) {
-        return $this->print($message, 'brown')->nl();
-    }
-
-    public function arrow(string $color = 'dark_gray') {
-        return $this->print(' >> ', $color);
-    }
-
-    public function sep(string $color = 'dark_gray') {
-        return $this->print(' - ', $color);
-    }
-
-    public function listItem($index, string $prefix = '') {
-        return $this->printl($prefix . $index, 4, 'light_green')->sep();
-    }
-
-    public function list(string $title, $prompt, string $error, array $actions, $default = false, $zero_action = false) {
-        $this->notice($title);
-
-        if ($zero_action !== false) {
-            $this->listItem(0)->print($zero_action, 'cyan')->nl();
-        }
-
-        $is_assoc = Arr::isAssoc($actions);
-
-        foreach ($actions as $i => $a) {
-            $this->listItem($is_assoc ? $i : $i + 1)->print($a, 'cyan')->nl();
-        }
-
-        $this->nl()->v(sprintf(
-            'range:%d,%d,%s',
-            $zero_action === false ? 1 : 0,
-            count($actions),
-            $error
-        ), $default !== false, $default, true)->inputv($index, $prompt);
-
-        return $index;
-    }
-
-    public function leading($value, $filler, $count) {
-        if (str_contains($value, "\033")) {
-            $strip = $this->strip($value);
-
-            return str_replace($strip, str_repeat($filler, max(0, $count - strlen($strip))) . $strip, $value);
-        }
-
-        return sprintf("%'.{$filler}{$count}s", $value);
-    }
-
-    public function money($value) {
-        return '$' . $value;
-    }
-
     public function command(string $command, ...$values) {
         @exec(sprintf($command, ...$values));
 
@@ -747,17 +908,22 @@ class InvoiceGenerator {
     public function prompt($prompt, string $type = null) {
         $type = $type ?? $prompt->type ?? 'string';
 
-        return $this->v(
-            $this->isTypeSupported($type) ? $type : 'string',
+        return $this->input(
+            Input::isTypeSupported($type) ? $type : 'string',
             isset($prompt->default),
             $prompt->default ?? null
-        )->sp(11)->input($prompt->prompt);
+        )->sp(11)->message($prompt->prompt)->get();
     }
 
     public function getRenderItems($client, $invoice_number) {
         $total = 0;
         $list = new Collection;
         $items = new Collection;
+
+        $colors = (object) [
+            'blue' => new Color(47, 98, 253),
+            'gray' => new Color(145, 156, 158),
+        ];
 
         $client_items = collect()->wrap($client->items ?? [])->take(10)->values();
 
@@ -891,7 +1057,7 @@ class InvoiceGenerator {
                     'text' => $item['subtitle'],
                     'font' => [
                         'size' => 9,
-                        'color' => $this->colors->gray,
+                        'color' => $colors->gray,
                         'max_width' => 450 - 58 - 20,
                     ],
                 ]);
@@ -940,7 +1106,7 @@ class InvoiceGenerator {
                 'text' => 'Billed To',
                 'font' => [
                     'size' => 9,
-                    'color' => $this->colors->blue,
+                    'color' => $colors->blue,
                 ],
             ],
             [
@@ -956,7 +1122,7 @@ class InvoiceGenerator {
                 'text' => 'Invoice Number',
                 'font' => [
                     'size' => 9,
-                    'color' => $this->colors->blue,
+                    'color' => $colors->blue,
                 ],
             ],
             [
@@ -972,7 +1138,7 @@ class InvoiceGenerator {
                 'text' => 'Date of Issue',
                 'font' => [
                     'size' => 9,
-                    'color' => $this->colors->blue,
+                    'color' => $colors->blue,
                 ],
             ],
             [
@@ -989,7 +1155,7 @@ class InvoiceGenerator {
                 'font' => [
                     'size' => 9,
                     'align' => 'right',
-                    'color' => $this->colors->blue,
+                    'color' => $colors->blue,
                 ],
             ],
             [
@@ -1010,7 +1176,7 @@ class InvoiceGenerator {
                 'text' => 'Item',
                 'font' => [
                     'size' => 9,
-                    'color' => $this->colors->blue,
+                    'color' => $colors->blue,
                 ],
             ],
 
@@ -1021,7 +1187,7 @@ class InvoiceGenerator {
                 'text' => 'Price',
                 'font' => [
                     'size' => 9,
-                    'color' => $this->colors->blue,
+                    'color' => $colors->blue,
                 ],
             ],
 
@@ -1033,7 +1199,7 @@ class InvoiceGenerator {
                 'font' => [
                     'size' => 9,
                     'align' => 'right',
-                    'color' => $this->colors->blue,
+                    'color' => $colors->blue,
                 ],
             ],
 
@@ -1048,7 +1214,7 @@ class InvoiceGenerator {
                 'text' => 'It is truly a pleasure to serve you!',
                 'font' => [
                     'size' => 9,
-                    'color' => $this->colors->blue,
+                    'color' => $colors->blue,
                 ],
             ],
             [
@@ -1058,11 +1224,11 @@ class InvoiceGenerator {
                 'font' => [
                     'size' => 9,
                     'line_spacing' => 3,
-                    'color' => $this->colors->blue,
+                    'color' => $colors->blue,
                 ],
             ],
         ];
     }
 }
 
-new InvoiceGenerator;
+new Program;
