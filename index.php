@@ -64,8 +64,6 @@ class Menu {
             $this->printl($i + 1, 4, 'light_green')->sep()->print($item->message, 'cyan')->nl();
         }
 
-        $i = $this->input()->get();
-
         $range = sprintf(
             'range:%d,%d,%s',
             0,
@@ -175,7 +173,7 @@ class Program {
         die;
     }
 
-    public function input(string $validator = 'string', $nullable = false, $default = null, $printback = false) {
+    public function input($validator = 'string', $nullable = false, $default = null, $printback = false) {
         return $this->input = new Input($this, $validator, $nullable, $default, $printback);
     }
 
@@ -197,7 +195,7 @@ class Program {
 }
 
 class Input {
-    public function __construct(Program $program, string $validator = 'string', $nullable = false, $default = null, $printback = false) {
+    public function __construct(Program $program, $validator = 'string', $nullable = false, $default = null, $printback = false) {
         $this->program = $program;
 
         $this->inputting = false;
@@ -245,6 +243,12 @@ class Input {
 
         $validators = Arr::wrap($this->validator);
 
+        if (str_contains($output, chr(27))) {
+            $this->error('Please try that again.');
+
+            return $this->get();
+        }
+
         foreach ($validators as $validator) {
             if (is_callable($validator)) {
                 $error = '';
@@ -261,7 +265,7 @@ class Input {
 
                 $null = false;
 
-                if ($output === '' && $this->nullable) {
+                if ($this->nullable && (str_contains($output, chr(24)) || $output === '')) {
                     $output = $this->default;
 
                     $null = true;
@@ -480,7 +484,7 @@ class Output {
     }
 
     public function printBack($rows, $cols, $message, string $color = null) {
-        return $this->printf("\033[s\033[%dA\033[%dC%s\033[u", [$rows, $cols, $message], $color);
+        return $this->printf("\033[s\033[%dA\033[%dC%s\033[K\033[u", [$rows, $cols, $message], $color);
     }
 
     public function clear() {
