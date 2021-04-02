@@ -22,18 +22,20 @@ class Menu {
         $this->title = $title;
         $this->prompt = $prompt ?? $title;
         $this->error = $error ?? 'Invalid option.';
-        $this->items = collect();
+        $this->items = [];
         $this->default = false;
+
+        $this->on_showing = null;
     }
 
     public function items(...$items) {
-        $this->items->push(...$items);
+        array_push($this->items, ...$items);
 
         return $this;
     }
 
     public function item(MenuItem $item) {
-        $this->items->push($item);
+        array_push($this->items, $item);
 
         return $this;
     }
@@ -44,19 +46,17 @@ class Menu {
         return $this;
     }
 
-    public function __call($name, $arguments) {
-        if (in_array($name, ['input'])) {
-            return $this->program->{$name}(...$arguments);
-        } else if (method_exists($this->program->output, $name)) {
-            $output = $this->program->output->{$name}(...$arguments);
+    public function showing($on_showing = null) {
+        $this->on_showing = $on_showing;
 
-            return $output === $this->program->output ? $this : $output;
-        }
-
-        throw new \Exception("Unknown method '$name'");
+        return $this;
     }
 
     public function show() {
+        if ($this->on_showing !== null && is_callable($this->on_showing)) {
+            call_user_func($this->on_showing, $this);
+        }
+
         $this->clear()->print($this->title, 'brown')->print(':', 'brown')->nl()
              ->printl('0', 4, 'light_green')->sep()->print('Exit', 'red')->nl();
 
@@ -83,8 +83,20 @@ class Menu {
                 $this->parent->show();
             }
         } else {
-            $this->items->get($index - 1)->call();
+            $this->items[$index - 1]->call();
         }
+    }
+
+    public function __call($name, $arguments) {
+        if (in_array($name, ['input'])) {
+            return $this->program->{$name}(...$arguments);
+        } else if (method_exists($this->program->output, $name)) {
+            $output = $this->program->output->{$name}(...$arguments);
+
+            return $output === $this->program->output ? $this : $output;
+        }
+
+        throw new \Exception("Unknown method '$name'");
     }
 }
 
@@ -114,17 +126,51 @@ class Program {
 
         $menu = new Menu($this, 'Select Client');
 
-        $menu->item(new MenuItem([['Create new client', 'green']], $this->createNewClientMenu($menu)));
+        $menu->showing(function(Menu $menu) {
+            $menu->items = [];
 
-        foreach ($this->clients as $client) {
-            $menu->item(new MenuItem($client->name, $this->createClientMenu($menu, $client)));
-        }
+            $menu->item(new MenuItem([['Create new client', 'green']], $this->createNewClientMenu($menu)));
+
+            foreach ($this->clients as $client) {
+                $menu->item(new MenuItem($client->name, $this->createClientMenu($menu, $client)));
+            }
+        });
 
         $menu->show();
     }
 
-    public function createNewClientMenu(Menu $parent) {
-        //
+    public function createNewClientMenu(Menu $menu) {
+        return function() use ($menu) {
+            $this->clear()->print('Creating new client:', 'brown')->nl()
+                 ->input('string:lower')->sp(4)->message('Id')->set($id)
+                 ->input()->sp(4)->message('Name')->set($name)
+                 ->input()->sp(4)->message('Billed To')->set($billed)
+                 ->input('int', true, 1, true)->sp(4)->message(['Invoice # (', ['1', 'brown'], ')'])->set($invoice)
+                 ->input('path', true, null, true)->sp(4)->message(['Storage Path (', ['optional', 'gray'], ')'])->set($path)
+                 ->nl()->input('bool', true, true, ['No', 'Yes'])
+                 ->message(['Are you sure you want to create this client? [', ['Y', 'brown'], '/', ['n', 'brown'], ']'])
+                 ->set($confirm)->nl();
+
+            if ($confirm) {
+                $this->clients->push((object) [
+                    'id' => $id,
+                    'name' => $name,
+                    'billed-to' => $billed,
+                    'next-invoice-number' => $invoice,
+                    'items' => [],
+                ]);
+
+                $this->save();
+
+                $this->printf('Successfully created the client "%s"!', $name, 'green')->nl();
+            } else {
+                $this->printf('Canceled the creation of the client "%s".', $name, 'red')->nl();
+            }
+
+            sleep(3);
+
+            $menu->show();
+        };
     }
 
     public function createClientMenu(Menu $parent, $client) {
@@ -223,7 +269,7 @@ class Input {
     public function set(&$variable = null) {
         $variable = $this->get();
 
-        return $this;
+        return $this->program;
     }
 
     public function get() {
@@ -484,7 +530,7 @@ class Output {
     }
 
     public function printBack($rows, $cols, $message, string $color = null) {
-        return $this->printf("\033[s\033[%dA\033[%dC%s\033[K\033[u", [$rows, $cols, $message], $color);
+        return $this->printf("\0337\033[%dA\033[%dC%s\033[K\0338", [$rows, $cols, $message], $color);
     }
 
     public function clear() {
