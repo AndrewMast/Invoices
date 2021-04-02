@@ -177,7 +177,7 @@ class Program {
     }
 
     public function createInvoiceMenu(Menu $parent, $client, $next = null) {
-        //
+        // TODO
     }
 
     public function createEditClientMenu(Menu $parent, $client) {
@@ -191,6 +191,8 @@ class Program {
             $client->{'billed-to'} = $copy->{'billed-to'};
             $client->{'next-invoice-number'} = $copy->{'next-invoice-number'};
             $client->{'storage-path'} = $copy->{'storage-path'};
+
+            $this->save();
         });
 
         $menu->showing(function(Menu $menu) use ($client) {
@@ -202,12 +204,12 @@ class Program {
                     $this->createSaveAndExitMenu($menu)
                 ),
                 new MenuItem(
-                    ['Edit ', ['Id', 'purple'], ' (', [$client->id, 'brown'], ')'],
-                    $this->createEditAttributeMenu($menu, 'Id', $client, 'id', 'string:lower')
-                ),
-                new MenuItem(
                     ['Edit ', ['Name', 'purple'], ' (', [$client->name, 'brown'], ')'],
                     $this->createEditAttributeMenu($menu, 'Name', $client, 'name')
+                ),
+                new MenuItem(
+                    ['Edit ', ['Id', 'purple'], ' (', [$client->id, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, 'Id', $client, 'id', 'string:lower')
                 ),
                 new MenuItem(
                     ['Edit ', ['Billed To', 'purple'], ' (', [$client->{'billed-to'}, 'brown'], ')'],
@@ -215,15 +217,19 @@ class Program {
                 ),
                 new MenuItem(
                     ['Edit ', ['Invoice #', 'purple'], ' (', [$client->{'next-invoice-number'}, 'brown'], ')'],
-                    $this->createEditAttributeMenu($menu, 'Invoice #', $client, 'next-invoice-number', 'int', true, 1, true)
+                    $this->createEditAttributeMenu($menu, 'Invoice #', $client, 'next-invoice-number', 'int')
                 ),
                 new MenuItem(
-                    ['Edit ', ['Path', 'purple'], ' (', empty($client->{'storage-path'}) ? ['null', 'gray'] : [$client->{'storage-path'}, 'brown'], ')'],
-                    $this->createEditAttributeMenu($menu, 'Path', $client, 'storage-path', 'path:folder', true, null, true)
+                    ['Edit ', ['Storage Path', 'purple'], ' (', empty($client->{'storage-path'}) ? ['null', 'gray'] : [$client->{'storage-path'}, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, ['Storage Path (', ['optional', 'gray'], ')'], $client, 'storage-path', 'path:folder', true, null, true)
                 ),
                 new MenuItem(
                     'Edit Invoice Items',
                     $this->createEditInvoiceItemsMenu($menu, $client)
+                ),
+                new MenuItem(
+                    'Edit Prompts',
+                    $this->createEditPromptsMenu($menu, $client)
                 ),
                 new MenuItem([['Delete Client', 'light_red']], $this->createRemoveClientMenu($menu, $client))
             );
@@ -235,8 +241,8 @@ class Program {
     public function createNewClientMenu(Menu $menu) {
         return function() use ($menu) {
             $this->clear()->print('Creating Client:', 'brown')->nl()
-                 ->input('string:lower')->sp(4)->message('Id')->set($id)
                  ->input()->sp(4)->message('Name')->set($name)
+                 ->input('string:lower')->sp(4)->message('Id')->set($id)
                  ->input()->sp(4)->message('Billed To')->set($billed)
                  ->input('int', true, 1, true)->sp(4)->message(['Invoice # (', ['1', 'brown'], ')'])->set($invoice)
                  ->input('path:folder', true, null, true)->sp(4)->message(['Storage Path (', ['optional', 'gray'], ')'])->set($path)
@@ -246,12 +252,13 @@ class Program {
 
             if ($confirm) {
                 $this->clients->push((object) [
-                    'id' => $id,
                     'name' => $name,
+                    'id' => $id,
                     'billed-to' => $billed,
                     'next-invoice-number' => $invoice,
                     'storage-path' => $path,
                     'items' => [],
+                    'prompts' => [],
                 ]);
 
                 $this->save();
@@ -277,7 +284,7 @@ class Program {
                 $index = $this->clients->search($client);
 
                 if ($index === false) {
-                    throw new \Exception('Cannot delete client!');
+                    throw new \Exception('Cannot find client to delete!');
                 }
 
                 $this->clients->splice($index, 1);
@@ -329,6 +336,8 @@ class Program {
             $item->subtitle = $copy->subtitle;
             $item->price = $copy->price;
             $item->quantity = $copy->quantity;
+
+            $this->save();
         });
 
         $menu->showing(function(Menu $menu) use ($client, $item) {
@@ -349,7 +358,7 @@ class Program {
                 ),
                 new MenuItem(
                     ['Edit ', ['Subtitle', 'purple'], ' (', empty($item->subtitle) ? ['null', 'gray'] : [$item->subtitle, 'brown'], ')'],
-                    $this->createEditAttributeMenu($menu, 'Subtitle', $item, 'subtitle', 'string', true, null, true)
+                    $this->createEditAttributeMenu($menu, ['Subtitle (', ['optional', 'gray'], ')'], $item, 'subtitle', 'string', true, null, true)
                 ),
                 new MenuItem(
                     ['Edit ', ['Price', 'purple'], ' (', [$item->price, 'brown'], ')'],
@@ -357,11 +366,7 @@ class Program {
                 ),
                 new MenuItem(
                     ['Edit ', ['Quantity', 'purple'], ' (', [$item->quantity, 'brown'], ')'],
-                    $this->createEditAttributeMenu($menu, 'Quantity', $item, 'quantity', 'int', true, 1, true)
-                ),
-                new MenuItem(
-                    'Edit Prompts',
-                    $this->createEditPromptsMenu($menu, $client, $item)
+                    $this->createEditAttributeMenu($menu, ['Quantity (', ['1', 'brown'], ')'], $item, 'quantity', 'int', true, 1, true)
                 ),
                 new MenuItem([['Delete Invoice Item', 'light_red']], $this->createRemoveInvoiceItemMenu($menu, $client, $item))
             );
@@ -375,9 +380,9 @@ class Program {
             $this->clear()->print(['Creating Invoice Item for ', [$client->name, 'green'], ':'], 'brown')->nl()
                  ->input()->sp(4)->message('Name')->set($name)
                  ->input()->sp(4)->message('Title')->set($title)
-                 ->input('string', true, null, true)->sp(4)->message('Subtitle')->set($subtitle)
+                 ->input('string', true, null, true)->sp(4)->message(['Subtitle (', ['optional', 'gray'], ')'])->set($subtitle)
                  ->input('int')->sp(4)->message('Price')->set($price)
-                 ->input('int', true, 1, true)->sp(4)->message('Quantity')->set($quantity)
+                 ->input('int', true, 1, true)->sp(4)->message(['Quantity (', ['1', 'brown'], ')'])->set($quantity)
                  ->nl()->input('bool', true, true, ['No', 'Yes'])
                  ->message(['Are you sure you want to create this invoice item? [', ['Y', 'brown'], '/', ['n', 'brown'], ']'])
                  ->set($confirm)->nl();
@@ -389,7 +394,6 @@ class Program {
                     'subtitle' => $subtitle,
                     'price' => $price,
                     'quantity' => $quantity,
-                    'prompts' => [],
                 ]);
 
                 $this->save();
@@ -415,7 +419,7 @@ class Program {
                 $index = array_search($item, $client->items);
 
                 if ($index === false) {
-                    throw new \Exception('Cannot delete client!');
+                    throw new \Exception('Cannot find invoice item to delete!');
                 }
 
                 array_splice($client->items, $index, 1);
@@ -437,18 +441,18 @@ class Program {
         };
     }
 
-    public function createEditPromptsMenu(Menu $parent, $client, $item) {
-        $menu = new Menu($parent, ['Editing Prompts for Invoice Item ', [$item->name, 'green']], 'Select prompt', 'Please select a valid prompt');
+    public function createEditPromptsMenu(Menu $parent, $client) {
+        $menu = new Menu($parent, ['Editing Prompts for ', [$client->name, 'green']], 'Select prompt', 'Please select a valid prompt');
 
-        $menu->showing(function(Menu $menu) use ($client, $item) {
-            $prompts = $item->prompts;
+        $menu->showing(function(Menu $menu) use ($client) {
+            $prompts = $client->prompts;
 
-            $menu->items(new MenuItem([['Create new prompt', 'green']], $this->createNewPromptMenu($menu, $client, $item)));
+            $menu->items(new MenuItem([['Create new prompt', 'green']], $this->createNewPromptMenu($menu, $client)));
 
             foreach ($prompts as $prompt) {
                 $menu->item(new MenuItem(
-                    ['Edit ', [$item->name, 'purple']],
-                    $this->createEditPromptMenu($menu, $client, $item, $prompt)
+                    ['Edit ', [$prompt->name, 'purple']],
+                    $this->createEditPromptMenu($menu, $client, $prompt)
                 ));
             }
         });
@@ -456,16 +460,134 @@ class Program {
         return $menu;
     }
 
-    public function createEditPromptMenu(Menu $parent, $client, $item, $prompt) {
-        // TODO: Move prompts to client level instead of invoice item level
+    public function createEditPromptMenu(Menu $parent, $client, $prompt) {
+        $menu = new Menu($parent, null, 'Select action', 'Please select a valid action');
+
+        $copy = clone $prompt;
+
+        $menu->exiting(function(Menu $menu) use ($prompt, $copy) {
+            $prompt->name = $copy->name;
+            $prompt->id = $copy->id;
+            $prompt->type = $copy->type;
+            $prompt->message = $copy->message;
+            $prompt->hint = $copy->hint;
+            $prompt->nullable = $copy->nullable;
+            $prompt->default = $copy->default;
+
+            $this->save();
+        });
+
+        $menu->showing(function(Menu $menu) use ($client, $prompt) {
+            $menu->title = ['Editing Prompt ', [$prompt->name, 'green']];
+
+            $menu->items(
+                new MenuItem(
+                    [['Save & Edit', 'green']],
+                    $this->createSaveAndExitMenu($menu)
+                ),
+                new MenuItem(
+                    ['Edit ', ['Name', 'purple'], ' (', [$prompt->name, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, 'Name', $prompt, 'name')
+                ),
+                new MenuItem(
+                    ['Edit ', ['Id', 'purple'], ' (', [$prompt->id, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, 'Id', $prompt, 'id', 'string:lower')
+                ),
+                new MenuItem(
+                    ['Edit ', ['Type', 'purple'], ' (', [$prompt->type, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, 'Type', $prompt, 'type')
+                ),
+                new MenuItem(
+                    ['Edit ', ['Message', 'purple'], ' (', [$prompt->message, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, 'Message', $prompt, 'message')
+                ),
+                new MenuItem(
+                    ['Edit ', ['Hint', 'purple'], ' (', empty($prompt->hint) ? ['null', 'gray'] : [$prompt->hint, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, ['Hint (', ['optional', 'gray'], ')'], $prompt, 'hint', 'string', true, null, true)
+                ),
+                new MenuItem(
+                    ['Edit ', ['Nullable', 'purple'], ' (', [$prompt->nullable ? 'True' : 'False', 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, ['Nullable (', ['False', 'brown'], ')'], $prompt, 'nullable', 'string', true, null, true)
+                ),
+                new MenuItem(
+                    ['Edit ', ['Default', 'purple'], ' (', empty($prompt->default) ? ['null', 'gray'] : [$prompt->default, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, ['Default (', ['optional', 'gray'], ')'], $prompt, 'default', 'string', true, null, true)
+                ),
+                new MenuItem([['Delete Prompt', 'light_red']], $this->createRemovePromptMenu($menu, $client, $prompt))
+            );
+        });
+
+        return $menu;
     }
 
-    public function createNewPromptMenu(Menu $menu, $client, $item) {
-        //
+    public function createNewPromptMenu(Menu $menu, $client) {
+        return function() use ($menu, $client) {
+            $this->clear()->print(['Creating Prompt for ', [$client->name, 'green'], ':'], 'brown')->nl()
+                 ->input()->sp(4)->message('Name')->set($name)
+                 ->input('string:lower')->sp(4)->message('Id')->set($id)
+                 ->input()->sp(4)->message('Type')->set($type)
+                 ->input()->sp(4)->message('Message')->set($message)
+                 ->input('string', true, null, true)->sp(4)->message(['Hint (', ['optional', 'gray'], ')'])->set($hint)
+                 ->input('bool', true, false, ['False', 'True'])->sp(4)->message(['Nullable (', ['False', 'brown'], ')'])->set($nullable)
+                 ->input('string', true, null, true)->sp(4)->message(['Default (', ['optional', 'gray'], ')'])->set($default)
+                 ->nl()->input('bool', true, true, ['No', 'Yes'])
+                 ->message(['Are you sure you want to create this prompt? [', ['Y', 'brown'], '/', ['n', 'brown'], ']'])
+                 ->set($confirm)->nl();
+
+            if ($confirm) {
+                array_push($client->prompts, (object) [
+                    'name' => $name,
+                    'id' => $id,
+                    'type' => $type,
+                    'message' => $message,
+                    'hint' => $hint,
+                    'nullable' => $nullable,
+                    'default' => $default,
+                ]);
+
+                $this->save();
+
+                $this->printf('Successfully created the prompt "%s"!', $name, 'green')->nl();
+            } else {
+                $this->printf('Canceled the creation of the prompt "%s".', $name, 'red')->nl();
+            }
+
+            sleep(2);
+
+            $menu->show();
+        };
     }
 
-    public function createRemovePromptMenu(Menu $menu, $client, $item, $prompt) {
-        //
+    public function createRemovePromptMenu(Menu $menu, $client, $prompt) {
+        return function() use ($menu, $client, $prompt) {
+            $this->nl()->input('bool', true, false, ['No', 'Yes'])
+                 ->message(['Are you sure you want to delete this prompt? [', ['y', 'brown'], '/', ['N', 'brown'], ']'])
+                 ->set($confirm)->nl();
+
+            if ($confirm) {
+                $index = array_search($prompt, $client->prompts);
+
+                if ($index === false) {
+                    throw new \Exception('Cannot find prompt to delete!');
+                }
+
+                array_splice($client->prompts, $index, 1);
+
+                $this->save();
+
+                $this->printf('Deleted the prompt "%s".', $prompt->name, 'red')->nl();
+
+                sleep(2);
+
+                $menu->exit();
+            } else {
+                $this->printf('Canceled the deletion of the prompt "%s".', $prompt->name, 'green')->nl();
+
+                sleep(2);
+
+                $menu->show();
+            }
+        };
     }
 
     public function createEditAttributeMenu(Menu $menu, $title, $object, $attribute, ...$validator) {
@@ -493,9 +615,18 @@ class Program {
         $this->clients_file = output_path('clients.json');
 
         $this->clients = new Collection(file_exists($this->clients_file) ? json_decode(file_get_contents($this->clients_file)) : []);
+
+        return $this;
     }
 
     public function save() {
+        $this->clients = $this->clients->sortBy('name');
+
+        foreach ($this->clients as $client) {
+            $client->items = collect($client->items)->sortBy('name')->values()->all();
+            $client->prompts = collect($client->prompts)->sortBy('name')->values()->all();
+        }
+
         file_put_contents($this->clients_file, json_encode($this->clients->all(), JSON_PRETTY_PRINT));
 
         return $this;
@@ -570,7 +701,7 @@ class Input {
         $stdin = fgets(STDIN);
 
         if ($stdin === false) {
-            die; // Ctrl+C
+            die; /* Ctrl+C */
         }
 
         $output = trim($stdin);
@@ -599,7 +730,7 @@ class Input {
 
                 $null = false;
 
-                if ($this->nullable && (str_contains($output, chr(24)) || $output === '')) {
+                if ($this->nullable && $output === '') {
                     $output = $this->default;
 
                     $null = true;
@@ -1166,9 +1297,6 @@ class InvoiceGenerator {
         }
     }
 
-    public function editInvoiceItemPrompts($item) {
-        // TODO: Make prompts viewable/editable/deletable
-    }
 
     public function createClient() {
         $this->notice('Creating New Client')
@@ -1444,7 +1572,7 @@ class InvoiceGenerator {
         }
 
         return [
-            // Background & Header
+            /* Background & Header */
             [
                 'type' => 'rect',
                 'position' => ['x' => 0, 'y' => 0],
@@ -1459,7 +1587,7 @@ class InvoiceGenerator {
             ],
 
 
-            // Billed To
+            /* Billed To */
             [
                 'type' => 'text',
                 'position' => ['x' => 58, 'y' => 145],
@@ -1475,7 +1603,7 @@ class InvoiceGenerator {
                 'text' => $client->{'billed-to'},
             ],
 
-            // Invoice Number
+            /* Invoice Number */
             [
                 'type' => 'text',
                 'position' => ['x' => 280, 'y' => 145],
@@ -1491,7 +1619,7 @@ class InvoiceGenerator {
                 'text' => $this->leading($invoice_number, '0', 6),
             ],
 
-            // Date of Issue
+            /* Date of Issue */
             [
                 'type' => 'text',
                 'position' => ['x' => 390, 'y' => 145],
@@ -1507,7 +1635,7 @@ class InvoiceGenerator {
                 'text' => Carbon::today()->format('m/d/Y'),
             ],
 
-            // Invoice Total
+            /* Invoice Total */
             [
                 'type' => 'text',
                 'position' => ['x' => 612 - 58, 'y' => 145],
@@ -1529,7 +1657,7 @@ class InvoiceGenerator {
             ],
 
 
-            // Item
+            /* Item */
             [
                 'type' => 'text',
                 'position' => ['x' => 58, 'y' => 250],
@@ -1540,7 +1668,7 @@ class InvoiceGenerator {
                 ],
             ],
 
-            // Price
+            /* Price */
             [
                 'type' => 'text',
                 'position' => ['x' => 450, 'y' => 250],
@@ -1551,7 +1679,7 @@ class InvoiceGenerator {
                 ],
             ],
 
-            // Qty
+            /* Qty */
             [
                 'type' => 'text',
                 'position' => ['x' => 612 - 58, 'y' => 250],
@@ -1567,7 +1695,7 @@ class InvoiceGenerator {
             ...$list->all(),
 
 
-            // Thanks & Footer
+            /* Thanks & Footer */
             [
                 'type' => 'text',
                 'position' => ['x' => 58, 'y' => 792 - 58 - 21 - 60],
