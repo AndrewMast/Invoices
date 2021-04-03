@@ -11,17 +11,18 @@ use Wujunze\Colors;
 
 class Program {
     public function __construct() {
-        // TODO: Make invoice numbers global
-
         $this->input = null;
         $this->output = new Output($this);
 
         $this->load();
 
-        $menu = new Menu($this, 'Select Client', 'Select client', 'Please select a valid client');
+        $menu = new Menu($this, 'Select Action', 'Select action', 'Please select a valid action');
 
         $menu->showing(function(Menu $menu) {
-            $menu->items(new MenuItem([['Create new client', 'green']], $this->createNewClientMenu($menu)));
+            $menu->items(
+                new MenuItem([['Edit settings', 'brown']], $this->createEditSettingsMenu($menu)),
+                new MenuItem([['Create new client', 'green']], $this->createNewClientMenu($menu))
+            );
 
             foreach ($this->clients as $client) {
                 $menu->item(new MenuItem($client->name, $this->createClientMenu($menu, $client)));
@@ -31,13 +32,50 @@ class Program {
         $menu->show();
     }
 
+    public function createEditSettingsMenu(Menu $parent) {
+        $menu = new Menu($parent, 'Editing Settings', 'Select action', 'Please select a valid action');
+
+        $copy = clone $this->settings;
+
+        $menu->exiting(function(Menu $menu) use ($copy) {
+            $this->settings->{'billing-address'} = $copy->{'billing-address'};
+            $this->settings->{'next-invoice-number'} = $copy->{'next-invoice-number'};
+            $this->settings->{'storage-path'} = $copy->{'storage-path'};
+
+            $this->save();
+        });
+
+        $menu->showing(function(Menu $menu) {
+            $menu->items(
+                new MenuItem(
+                    [['Save & Edit', 'green']],
+                    $this->createSaveAndExitMenu($menu)
+                ),
+                new MenuItem(
+                    ['Edit ', ['Billing Address', 'purple'], ' (', [$this->escapeAddress($this->settings->{'billing-address'}), 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, 'Billing Address', $this->settings, 'billing-address')
+                ),
+                new MenuItem(
+                    ['Edit ', ['Next Invoice Number', 'purple'], ' (', [$this->settings->{'next-invoice-number'}, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, 'Next Invoice Number', $this->settings, 'next-invoice-number', 'int')
+                ),
+                new MenuItem(
+                    ['Edit ', ['Storage Path', 'purple'], ' (', [$this->settings->{'storage-path'}, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, ['Storage Path (', ['optional', 'gray'], ')'], $this->settings, 'storage-path', 'path:folder', true, output_path())
+                )
+            );
+        });
+
+        return $menu;
+    }
+
     public function createClientMenu(Menu $parent, $client) {
         $menu = new Menu($parent, null, 'Select action', 'Please select a valid action');
 
         $menu->showing(function(Menu $menu) use ($client) {
             $menu->title = ['Actions for ', [$client->name, 'green']];
 
-            $next = $client->{'next-invoice-number'};
+            $next = $this->settings->{'next-invoice-number'};
 
             $menu->items(
                 new MenuItem(['Create Next Invoice (', [$next, 'brown'], ')'], $this->createInvoiceMenu($menu, $client, $next)),
@@ -56,8 +94,7 @@ class Program {
             $this->clear()->print('Creating Invoice for Client:', 'brown')->nl()
                  ->sp(4)->print('Name', 'cyan')->arrow()->print($client->name)->nl()
                  ->sp(4)->print('Id', 'cyan')->arrow()->print($client->id)->nl()
-                 ->sp(4)->print('Billed To', 'cyan')->arrow()->print($client->{'billed-to'})->nl()
-                 ->sp(4)->print('Storage Path', 'cyan')->arrow()->print($client->{'storage-path'} ?? '')->nl();
+                 ->sp(4)->print('Billed To', 'cyan')->arrow()->print($client->{'billed-to'})->nl();
 
             if ($invoice_number === null) {
                 $this->input('int')->sp(4)->message('Invoice #')->set($invoice_number);
@@ -195,8 +232,8 @@ class Program {
                     $pdf->contents()
                 );
 
-                if ($invoice_number === $client->{'next-invoice-number'}) {
-                    $client->{'next-invoice-number'}++;
+                if ($invoice_number === $this->settings->{'next-invoice-number'}) {
+                    $this->settings->{'next-invoice-number'}++;
                 }
 
                 $this->save();
@@ -229,8 +266,6 @@ class Program {
             $client->id = $copy->id;
             $client->name = $copy->name;
             $client->{'billed-to'} = $copy->{'billed-to'};
-            $client->{'storage-path'} = $copy->{'storage-path'};
-            $client->{'next-invoice-number'} = $copy->{'next-invoice-number'};
 
             $this->save();
         });
@@ -256,14 +291,6 @@ class Program {
                     $this->createEditAttributeMenu($menu, 'Billed To', $client, 'billed-to')
                 ),
                 new MenuItem(
-                    ['Edit ', ['Storage Path', 'purple'], ' (', empty($client->{'storage-path'}) ? ['null', 'gray'] : [$client->{'storage-path'}, 'brown'], ')'],
-                    $this->createEditAttributeMenu($menu, ['Storage Path (', ['optional', 'gray'], ')'], $client, 'storage-path', 'path:folder', true, null, true)
-                ),
-                new MenuItem(
-                    ['Edit ', ['Invoice #', 'purple'], ' (', [$client->{'next-invoice-number'}, 'brown'], ')'],
-                    $this->createEditAttributeMenu($menu, 'Invoice #', $client, 'next-invoice-number', 'int')
-                ),
-                new MenuItem(
                     'Edit Invoice Items',
                     $this->createEditInvoiceItemsMenu($menu, $client)
                 ),
@@ -284,8 +311,6 @@ class Program {
                  ->input()->sp(4)->message('Name')->set($name)
                  ->input('string:lower')->sp(4)->message('Id')->set($id)
                  ->input()->sp(4)->message('Billed To')->set($billed)
-                 ->input('path:folder', true, null, true)->sp(4)->message(['Storage Path (', ['optional', 'gray'], ')'])->set($path)
-                 ->input('int', true, 1, true)->sp(4)->message(['Invoice # (', ['1', 'brown'], ')'])->set($invoice)
                  ->nl()->input('bool', true, true, ['No', 'Yes'])
                  ->message(['Are you sure you want to create this client? [', ['Y', 'brown'], '/', ['n', 'brown'], ']'])
                  ->set($confirm)->nl();
@@ -295,8 +320,6 @@ class Program {
                     'name' => $name,
                     'id' => $id,
                     'billed-to' => $billed,
-                    'storage-path' => $path,
-                    'next-invoice-number' => $invoice,
                     'items' => [],
                     'prompts' => [],
                 ];
@@ -674,7 +697,15 @@ class Program {
         return str_replace(["\\t", "\\n"], ["\t", "\n"], $address);
     }
 
+    public function escapeAddress(string $address) {
+        return str_replace(["\t", "\n"], ["\\t", "\\n"], $address);
+    }
+
     public function load() {
+        if (!file_exists(store_path())) {
+            mkdir(store_path(), 0777, true);
+        }
+
         $this->clients_file = store_path('clients.json');
 
         $this->clients = new Collection(file_exists($this->clients_file) ? json_decode(file_get_contents($this->clients_file)) : []);
@@ -707,6 +738,10 @@ class Program {
 
     public function saveFile($file, $contents) {
         $path = rtrim($this->settings->{'storage-path'}, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file;
+
+        if (!file_exists($this->settings->{'storage-path'})) {
+            mkdir($this->settings->{'storage-path'}, 0777, true);
+        }
 
         file_put_contents($path, $contents);
 
