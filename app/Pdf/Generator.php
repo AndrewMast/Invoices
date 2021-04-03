@@ -63,7 +63,7 @@ class Generator {
 		if (method_exists($this, 'render' . Str::studly($item['type']) . 'Item')) {
 			return $this->{'render' . Str::studly($item['type']) . 'Item'}($item, $pdf);
 		} elseif (strtolower($item['type']) == 'command') {
-			$commands = Arr::wrap(objectToArray($item['command'] ?? []));
+			$commands = Arr::wrap(object_to_array($item['command'] ?? []));
 
 			foreach ($commands as $command => $arguments) {
 				if (is_numeric($command)) {

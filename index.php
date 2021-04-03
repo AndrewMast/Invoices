@@ -9,146 +9,16 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Wujunze\Colors;
 
-class Menu {
-    public function __construct($parent, $title, $prompt = null, $error = null) {
-        if ($parent instanceof Program) {
-            $this->parent = null;
-            $this->program = $parent;
-        } else if ($parent instanceof self) {
-            $this->parent = $parent;
-            $this->program = $parent->program;
-        }
-
-        $this->title = $title;
-        $this->prompt = $prompt ?? $title;
-        $this->error = $error ?? 'Invalid option.';
-        $this->items = [];
-        $this->default = false;
-
-        $this->on_showing = null;
-        $this->on_exiting = null;
-    }
-
-    public function items(...$items) {
-        $this->items = [];
-
-        array_push($this->items, ...$items);
-
-        return $this;
-    }
-
-    public function item(MenuItem $item) {
-        array_push($this->items, $item);
-
-        return $this;
-    }
-
-    public function default($default = false) {
-        $this->default = $default;
-
-        return $this;
-    }
-
-    public function showing($on_showing = null) {
-        $this->on_showing = $on_showing;
-
-        return $this;
-    }
-
-    public function exiting($on_exiting = null) {
-        $this->on_exiting = $on_exiting;
-
-        return $this;
-    }
-
-    protected function callback(string $callback) {
-        if ($this->{'on_' . $callback} ?? false && is_callable($this->{'on_' . $callback})) {
-            call_user_func($this->{'on_' . $callback}, $this);
-        }
-    }
-
-    public function show() {
-        $this->callback('showing');
-
-        $this->clear()->print($this->title, 'brown')->print(':', 'brown')->nl()
-             ->printl('0', 4, 'light_green')->sep()->print('Exit', 'red')->nl();
-
-        foreach ($this->items as $i => $item) {
-            $this->printl($i + 1, 4, 'light_green')->sep()->print($item->message, 'cyan')->nl();
-        }
-
-        $range = sprintf(
-            'range:%d,%d,%s',
-            0,
-            count($this->items),
-            $this->error
-        );
-
-        $this->nl()->input($range, $this->default !== false, $this->default, true)
-             ->message($this->prompt)
-             ->message($this->default === false ? [] : [' (', [$this->default, 'brown'], ')'])
-             ->set($index);
-
-        if ($index === 0) {
-            $this->callback('exiting');
-
-            $this->exit();
-        } else {
-            $this->items[$index - 1]->call();
-        }
-    }
-
-    public function exit() {
-        if ($this->parent === null) {
-            $this->program->exit();
-        } else {
-            $this->parent->show();
-        }
-    }
-
-    public function __call($name, $arguments) {
-        if ($name === 'input') {
-            return $this->program->{$name}(...$arguments);
-        } else if (method_exists($this->program->output, $name)) {
-            $output = $this->program->output->{$name}(...$arguments);
-
-            return $output === $this->program->output ? $this : $output;
-        }
-
-        throw new \Exception("Unknown method '$name'");
-    }
-}
-
-class MenuItem {
-    public function __construct($message, $action) {
-        $this->message = $message;
-        $this->action = $action;
-    }
-
-    public function call() {
-        if ($this->action instanceof Menu) {
-            return $this->action->show();
-        } else if (is_callable($this->action)) {
-            call_user_func($this->action);
-        } else {
-            throw new \Exception('Invalid action!');
-        }
-    }
-}
-
 class Program {
     public function __construct() {
         // TODO: Make invoice numbers global
-        // TODO: Make global storage path
-        // TODO: Make client duplicate path
-        // TODO: Make client creation menu finish into client menu
 
         $this->input = null;
         $this->output = new Output($this);
 
         $this->load();
 
-        $menu = new Menu($this, 'Select Client');
+        $menu = new Menu($this, 'Select Client', 'Select client', 'Please select a valid client');
 
         $menu->showing(function(Menu $menu) {
             $menu->items(new MenuItem([['Create new client', 'green']], $this->createNewClientMenu($menu)));
@@ -316,14 +186,14 @@ class Program {
                  ->set($confirm)->nl();
 
             if ($confirm) {
-                $filename = sprintf('invoice%s-%s.pdf', $this->leading($invoice_number, '0', 6), $client->id);
-                $filepath = invoice_path($filename);
-
                 $generator = new Generator;
 
                 $pdf = $generator->render($this->render($render_items, $client, $invoice_number, $total));
 
-                file_put_contents($filepath, $pdf->contents());
+                $filepath = $this->saveFile(
+                    sprintf('invoice%s-%s.pdf', $this->leading($invoice_number, '0', 6), $client->id),
+                    $pdf->contents()
+                );
 
                 if ($invoice_number === $client->{'next-invoice-number'}) {
                     $client->{'next-invoice-number'}++;
@@ -421,7 +291,7 @@ class Program {
                  ->set($confirm)->nl();
 
             if ($confirm) {
-                $this->clients->push((object) [
+                $client = (object) [
                     'name' => $name,
                     'id' => $id,
                     'billed-to' => $billed,
@@ -429,18 +299,24 @@ class Program {
                     'next-invoice-number' => $invoice,
                     'items' => [],
                     'prompts' => [],
-                ]);
+                ];
+
+                $this->clients->push($client);
 
                 $this->save();
 
                 $this->printf('Successfully created the client "%s"!', $name, 'green')->nl();
+
+                sleep(2);
+
+                $this->createClientMenu($menu, $client)->show();
             } else {
                 $this->printf('Canceled the creation of the client "%s".', $name, 'red')->nl();
+
+                sleep(2);
+
+                $menu->show();
             }
-
-            sleep(2);
-
-            $menu->show();
         };
     }
 
@@ -777,14 +653,39 @@ class Program {
         };
     }
 
-    public function load() {
-        if (!file_exists(invoice_path())) {
-            mkdir(invoice_path(), 0777, true);
+    public function fillSettings() {
+        if (!file_exists(output_path())) {
+            mkdir(output_path(), 0777, true);
         }
 
-        $this->clients_file = output_path('clients.json');
+        $this->clear()->print('Enter Settings', 'brown')->nl()
+             ->input()->sp(4)->message('Billing Address')->set($address)
+             ->input('int')->sp(4)->message('Starting Invoice #')->set($invoice)
+             ->input('path:folder', true, output_path())->sp(4)->message(['Storage Path (', ['optional', 'gray'], ')'])->set($path);
+
+        file_put_contents($this->settings_file, json_encode([
+            'billing-address' => $this->unescapeAddress($address),
+            'next-invoice-number' => $invoice,
+            'storage-path' => $path,
+        ], JSON_PRETTY_PRINT) . PHP_EOL);
+    }
+
+    public function unescapeAddress(string $address) {
+        return str_replace(["\\t", "\\n"], ["\t", "\n"], $address);
+    }
+
+    public function load() {
+        $this->clients_file = store_path('clients.json');
 
         $this->clients = new Collection(file_exists($this->clients_file) ? json_decode(file_get_contents($this->clients_file)) : []);
+
+        $this->settings_file = store_path('settings.json');
+
+        if (!file_exists($this->settings_file)) {
+            $this->fillSettings();
+        }
+
+        $this->settings = json_decode(file_get_contents($this->settings_file));
 
         return $this;
     }
@@ -799,7 +700,17 @@ class Program {
 
         file_put_contents($this->clients_file, json_encode($this->clients->all(), JSON_PRETTY_PRINT) . PHP_EOL);
 
+        file_put_contents($this->settings_file, json_encode($this->settings, JSON_PRETTY_PRINT) . PHP_EOL);
+
         return $this;
+    }
+
+    public function saveFile($file, $contents) {
+        $path = rtrim($this->settings->{'storage-path'}, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file;
+
+        file_put_contents($path, $contents);
+
+        return $path;
     }
 
     public function exit() {
@@ -812,6 +723,211 @@ class Program {
         return $this->input = new Input($this, $validator, $nullable, $default, $printback);
     }
 
+    public function command(string $command, ...$values) {
+        @exec(sprintf($command, ...$values));
+
+        return $this;
+    }
+
+    public function render(Collection $items, $client, $invoice_number, $total) {
+        $height = 270;
+        $list = new Collection;
+
+        $colors = (object) [
+            'blue' => new Color(47, 98, 253),
+            'gray' => new Color(145, 156, 158),
+        ];
+
+        foreach ($items as $item) {
+            $list->push([
+                'type' => 'text',
+                'position' => ['x' => 58, 'y' => $height],
+                'text' => $item['title'],
+                'font' => [
+                    'max_width' => 450 - 58 - 20,
+                ],
+            ]);
+
+            if (!empty($item['subtitle'])) {
+                $list->push([
+                    'type' => 'text',
+                    'position' => ['x' => 58, 'y' => $height + 15],
+                    'text' => $item['subtitle'],
+                    'font' => [
+                        'size' => 9,
+                        'color' => $colors->gray,
+                        'max_width' => 450 - 58 - 20,
+                    ],
+                ]);
+            }
+
+            $list->push([
+                'type' => 'text',
+                'position' => ['x' => 450, 'y' => $height],
+                'text' => $this->money($item['price']),
+                'font' => [
+                    'max_width' => 65,
+                ],
+            ], [
+                'type' => 'text',
+                'position' => ['x' => 612 - 58, 'y' => $height],
+                'text' => $item['quantity'],
+                'font' => [
+                    'align' => 'right',
+                    'max_width' => 30,
+                ],
+            ]);
+
+            $height += 35;
+        }
+
+        return [
+            /* Background & Header */
+            [
+                'type' => 'rect',
+                'position' => ['x' => 0, 'y' => 0],
+                'size' => ['width' => 612, 'height' => 792],
+                'fill' => new Color(243, 245, 248),
+            ],
+            [
+                'type' => 'image',
+                'position' => ['x' => 58, 'y' => 58],
+                'size' => ['width' => 175],
+                'image' => resource_path('images/invoice.png'),
+            ],
+
+
+            /* Billed To */
+            [
+                'type' => 'text',
+                'position' => ['x' => 58, 'y' => 145],
+                'text' => 'Billed To',
+                'font' => [
+                    'size' => 9,
+                    'color' => $colors->blue,
+                ],
+            ],
+            [
+                'type' => 'text',
+                'position' => ['x' => 58, 'y' => 160],
+                'text' => $client->{'billed-to'},
+            ],
+
+            /* Invoice Number */
+            [
+                'type' => 'text',
+                'position' => ['x' => 280, 'y' => 145],
+                'text' => 'Invoice Number',
+                'font' => [
+                    'size' => 9,
+                    'color' => $colors->blue,
+                ],
+            ],
+            [
+                'type' => 'text',
+                'position' => ['x' => 280, 'y' => 160],
+                'text' => $this->leading($invoice_number, '0', 6),
+            ],
+
+            /* Date of Issue */
+            [
+                'type' => 'text',
+                'position' => ['x' => 390, 'y' => 145],
+                'text' => 'Date of Issue',
+                'font' => [
+                    'size' => 9,
+                    'color' => $colors->blue,
+                ],
+            ],
+            [
+                'type' => 'text',
+                'position' => ['x' => 390, 'y' => 160],
+                'text' => Carbon::today()->format('m/d/Y'),
+            ],
+
+            /* Invoice Total */
+            [
+                'type' => 'text',
+                'position' => ['x' => 612 - 58, 'y' => 145],
+                'text' => 'Invoice Total',
+                'font' => [
+                    'size' => 9,
+                    'align' => 'right',
+                    'color' => $colors->blue,
+                ],
+            ],
+            [
+                'type' => 'text',
+                'position' => ['x' => 612 - 58, 'y' => 160],
+                'text' => $this->money($total),
+                'font' => [
+                    'size' => 26,
+                    'align' => 'right',
+                ],
+            ],
+
+
+            /* Item */
+            [
+                'type' => 'text',
+                'position' => ['x' => 58, 'y' => 250],
+                'text' => 'Item',
+                'font' => [
+                    'size' => 9,
+                    'color' => $colors->blue,
+                ],
+            ],
+
+            /* Price */
+            [
+                'type' => 'text',
+                'position' => ['x' => 450, 'y' => 250],
+                'text' => 'Price',
+                'font' => [
+                    'size' => 9,
+                    'color' => $colors->blue,
+                ],
+            ],
+
+            /* Qty */
+            [
+                'type' => 'text',
+                'position' => ['x' => 612 - 58, 'y' => 250],
+                'text' => 'Qty',
+                'font' => [
+                    'size' => 9,
+                    'align' => 'right',
+                    'color' => $colors->blue,
+                ],
+            ],
+
+
+            ...$list->all(),
+
+
+            /* Thanks & Footer */
+            [
+                'type' => 'text',
+                'position' => ['x' => 58, 'y' => 792 - 58 - 21 - 60],
+                'text' => 'It is truly a pleasure to serve you!',
+                'font' => [
+                    'size' => 9,
+                    'color' => $colors->blue,
+                ],
+            ],
+            [
+                'type' => 'textarea',
+                'position' => ['x' => 58, 'y' => 792 - 58 - 21],
+                'text' => $this->settings->{'billing-address'},
+                'font' => [
+                    'size' => 9,
+                    'line_spacing' => 3,
+                    'color' => $colors->blue,
+                ],
+            ],
+        ];
+    }
+
     public function __call($name, $arguments) {
         if (method_exists($this->output, $name)) {
             $output = $this->output->{$name}(...$arguments);
@@ -820,6 +936,133 @@ class Program {
         }
 
         throw new \Exception("Unknown method '$name'");
+    }
+}
+
+class Menu {
+    public function __construct($parent, $title, $prompt = null, $error = null) {
+        if ($parent instanceof Program) {
+            $this->parent = null;
+            $this->program = $parent;
+        } else if ($parent instanceof self) {
+            $this->parent = $parent;
+            $this->program = $parent->program;
+        }
+
+        $this->title = $title;
+        $this->prompt = $prompt ?? $title;
+        $this->error = $error ?? 'Invalid option.';
+        $this->items = [];
+        $this->default = false;
+
+        $this->on_showing = null;
+        $this->on_exiting = null;
+    }
+
+    public function items(...$items) {
+        $this->items = [];
+
+        array_push($this->items, ...$items);
+
+        return $this;
+    }
+
+    public function item(MenuItem $item) {
+        array_push($this->items, $item);
+
+        return $this;
+    }
+
+    public function default($default = false) {
+        $this->default = $default;
+
+        return $this;
+    }
+
+    public function showing($on_showing = null) {
+        $this->on_showing = $on_showing;
+
+        return $this;
+    }
+
+    public function exiting($on_exiting = null) {
+        $this->on_exiting = $on_exiting;
+
+        return $this;
+    }
+
+    protected function callback(string $callback) {
+        if ($this->{'on_' . $callback} ?? false && is_callable($this->{'on_' . $callback})) {
+            call_user_func($this->{'on_' . $callback}, $this);
+        }
+    }
+
+    public function show() {
+        $this->callback('showing');
+
+        $this->clear()->print($this->title, 'brown')->print(':', 'brown')->nl()
+             ->printl('0', 4, 'light_green')->sep()->print('Exit', 'red')->nl();
+
+        foreach ($this->items as $i => $item) {
+            $this->printl($i + 1, 4, 'light_green')->sep()->print($item->message, 'cyan')->nl();
+        }
+
+        $range = sprintf(
+            'range:%d,%d,%s',
+            0,
+            count($this->items),
+            $this->error
+        );
+
+        $this->nl()->input($range, $this->default !== false, $this->default, true)
+             ->message($this->prompt)
+             ->message($this->default === false ? [] : [' (', [$this->default, 'brown'], ')'])
+             ->set($index);
+
+        if ($index === 0) {
+            $this->callback('exiting');
+
+            $this->exit();
+        } else {
+            $this->items[$index - 1]->call();
+        }
+    }
+
+    public function exit() {
+        if ($this->parent === null) {
+            $this->program->exit();
+        } else {
+            $this->parent->show();
+        }
+    }
+
+    public function __call($name, $arguments) {
+        if ($name === 'input') {
+            return $this->program->{$name}(...$arguments);
+        } else if (method_exists($this->program->output, $name)) {
+            $output = $this->program->output->{$name}(...$arguments);
+
+            return $output === $this->program->output ? $this : $output;
+        }
+
+        throw new \Exception("Unknown method '$name'");
+    }
+}
+
+class MenuItem {
+    public function __construct($message, $action) {
+        $this->message = $message;
+        $this->action = $action;
+    }
+
+    public function call() {
+        if ($this->action instanceof Menu) {
+            return $this->action->show();
+        } else if (is_callable($this->action)) {
+            call_user_func($this->action);
+        } else {
+            throw new \Exception('Invalid action!');
+        }
     }
 }
 
@@ -888,7 +1131,7 @@ class Input {
                     return $this->get();
                 }
             } else if (is_string($validator)) {
-                if (!$this->isTypeSupported($validator)) {
+                if (!static::isTypeSupported($validator)) {
                     $validator = 'string';
                 }
 
@@ -1201,213 +1444,6 @@ class Output {
             return sprintf('($%d)', abs($value));
         }
     }
-
-    public function command(string $command, ...$values) {
-        @exec(sprintf($command, ...$values));
-
-        return $this;
-    }
-
-    public function render(Collection $items, $client, $invoice_number, $total) {
-        $height = 270;
-        $list = new Collection;
-
-        $colors = (object) [
-            'blue' => new Color(47, 98, 253),
-            'gray' => new Color(145, 156, 158),
-        ];
-
-        foreach ($items as $item) {
-            $list->push([
-                'type' => 'text',
-                'position' => ['x' => 58, 'y' => $height],
-                'text' => $item['title'],
-                'font' => [
-                    'max_width' => 450 - 58 - 20,
-                ],
-            ]);
-
-            if (!empty($item['subtitle'])) {
-                $list->push([
-                    'type' => 'text',
-                    'position' => ['x' => 58, 'y' => $height + 15],
-                    'text' => $item['subtitle'],
-                    'font' => [
-                        'size' => 9,
-                        'color' => $colors->gray,
-                        'max_width' => 450 - 58 - 20,
-                    ],
-                ]);
-            }
-
-            $list->push([
-                'type' => 'text',
-                'position' => ['x' => 450, 'y' => $height],
-                'text' => $this->money($item['price']),
-                'font' => [
-                    'max_width' => 65,
-                ],
-            ], [
-                'type' => 'text',
-                'position' => ['x' => 612 - 58, 'y' => $height],
-                'text' => $item['quantity'],
-                'font' => [
-                    'align' => 'right',
-                    'max_width' => 30,
-                ],
-            ]);
-
-            $height += 35;
-        }
-
-        return [
-            /* Background & Header */
-            [
-                'type' => 'rect',
-                'position' => ['x' => 0, 'y' => 0],
-                'size' => ['width' => 612, 'height' => 792],
-                'fill' => new Color(243, 245, 248),
-            ],
-            [
-                'type' => 'image',
-                'position' => ['x' => 58, 'y' => 58],
-                'size' => ['width' => 175],
-                'image' => resource_path('images/invoice.png'),
-            ],
-
-
-            /* Billed To */
-            [
-                'type' => 'text',
-                'position' => ['x' => 58, 'y' => 145],
-                'text' => 'Billed To',
-                'font' => [
-                    'size' => 9,
-                    'color' => $colors->blue,
-                ],
-            ],
-            [
-                'type' => 'text',
-                'position' => ['x' => 58, 'y' => 160],
-                'text' => $client->{'billed-to'},
-            ],
-
-            /* Invoice Number */
-            [
-                'type' => 'text',
-                'position' => ['x' => 280, 'y' => 145],
-                'text' => 'Invoice Number',
-                'font' => [
-                    'size' => 9,
-                    'color' => $colors->blue,
-                ],
-            ],
-            [
-                'type' => 'text',
-                'position' => ['x' => 280, 'y' => 160],
-                'text' => $this->leading($invoice_number, '0', 6),
-            ],
-
-            /* Date of Issue */
-            [
-                'type' => 'text',
-                'position' => ['x' => 390, 'y' => 145],
-                'text' => 'Date of Issue',
-                'font' => [
-                    'size' => 9,
-                    'color' => $colors->blue,
-                ],
-            ],
-            [
-                'type' => 'text',
-                'position' => ['x' => 390, 'y' => 160],
-                'text' => Carbon::today()->format('m/d/Y'),
-            ],
-
-            /* Invoice Total */
-            [
-                'type' => 'text',
-                'position' => ['x' => 612 - 58, 'y' => 145],
-                'text' => 'Invoice Total',
-                'font' => [
-                    'size' => 9,
-                    'align' => 'right',
-                    'color' => $colors->blue,
-                ],
-            ],
-            [
-                'type' => 'text',
-                'position' => ['x' => 612 - 58, 'y' => 160],
-                'text' => $this->money($total),
-                'font' => [
-                    'size' => 26,
-                    'align' => 'right',
-                ],
-            ],
-
-
-            /* Item */
-            [
-                'type' => 'text',
-                'position' => ['x' => 58, 'y' => 250],
-                'text' => 'Item',
-                'font' => [
-                    'size' => 9,
-                    'color' => $colors->blue,
-                ],
-            ],
-
-            /* Price */
-            [
-                'type' => 'text',
-                'position' => ['x' => 450, 'y' => 250],
-                'text' => 'Price',
-                'font' => [
-                    'size' => 9,
-                    'color' => $colors->blue,
-                ],
-            ],
-
-            /* Qty */
-            [
-                'type' => 'text',
-                'position' => ['x' => 612 - 58, 'y' => 250],
-                'text' => 'Qty',
-                'font' => [
-                    'size' => 9,
-                    'align' => 'right',
-                    'color' => $colors->blue,
-                ],
-            ],
-
-
-            ...$list->all(),
-
-
-            /* Thanks & Footer */
-            [
-                'type' => 'text',
-                'position' => ['x' => 58, 'y' => 792 - 58 - 21 - 60],
-                'text' => 'It is truly a pleasure to serve you!',
-                'font' => [
-                    'size' => 9,
-                    'color' => $colors->blue,
-                ],
-            ],
-            [
-                'type' => 'textarea',
-                'position' => ['x' => 58, 'y' => 792 - 58 - 21],
-                'text' => "Pilot Communications Group\nPO BOX 332, Thompson's Station, TN 37179",
-                'font' => [
-                    'size' => 9,
-                    'line_spacing' => 3,
-                    'color' => $colors->blue,
-                ],
-            ],
-        ];
-    }
 }
-
-// Input::isTypeSupported($type) ? $type : 'string',
 
 new Program;

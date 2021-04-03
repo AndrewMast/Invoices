@@ -14,7 +14,7 @@ function array_merge_recursive_distinct(array $array1, array $array2) {
     return $merged;
 }
 
-function objectToArray($d) {
+function object_to_array($d) {
     if (is_object($d)) {
         $d = get_object_vars($d);
     }
@@ -34,8 +34,8 @@ function output_path($file = '') {
     return base_path('output' . DIRECTORY_SEPARATOR . $file);
 }
 
-function invoice_path($file = '') {
-    return output_path('invoices' . DIRECTORY_SEPARATOR . $file);
+function store_path($file = '') {
+    return base_path('store' . DIRECTORY_SEPARATOR . $file);
 }
 
 function resource_path($file = '') {
