@@ -335,11 +335,10 @@ class Program {
                      ->input('bool', true, false, ['No', 'Yes'])->message(['Do you want to open the invoice? [', ['y', 'brown'], '/', ['N', 'brown'], ']'])
                      ->set($open);
 
-                // TODO: Find mac or pc
-                if (false) {
-                    $this->command($open ? 'start "" "%s"' : 'explorer.exe /select, "%s"', $filepath);
-                } else {
+                if (php_uname('s') === 'Darwin') {
                     $this->command($open ? 'open "%s"' : 'open -R "%s"', $filepath);
+                } else {
+                    $this->command($open ? 'start "" "%s"' : 'explorer.exe /select, "%s"', $filepath);
                 }
             } else {
                 $this->printf('Canceled the creation of invoice #%d for %s.', [$invoice_number, $client->name], 'red')->nl();
