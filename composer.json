@@ -1,10 +1,22 @@
 {
+    "name": "andrewmast/invoices",
+    "description": "Invoice Generator",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Andrew Mast",
+            "email": "andrew@andrewmast.com"
+        }
+    ],
     "require": {
         "crabbly/fpdf-laravel": "^1.0",
         "illuminate/support": "^8.20",
         "intervention/image": "^2.5",
         "wujunze/php-cli-color": "^2.4"
     },
+    "bin": [
+        "bin/invoice"
+    ],
     "autoload": {
         "psr-4": {
             "App\\": "app/"
