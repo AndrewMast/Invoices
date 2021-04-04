@@ -9,9 +9,12 @@
         }
     ],
     "require": {
+        "php": "^7.3",
         "crabbly/fpdf-laravel": "^1.0",
         "illuminate/support": "^8.20",
         "intervention/image": "^2.5",
+        "symfony/console": "^4.0|^5.0",
+        "symfony/process": "^4.2|^5.0",
         "wujunze/php-cli-color": "^2.4"
     },
     "bin": [
