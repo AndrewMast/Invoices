@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Program;
+namespace Invoices\Program;
 
 use Illuminate\Support\Arr;
 

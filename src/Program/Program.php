@@ -1,9 +1,9 @@
 <?php
 
-namespace App\Program;
+namespace Invoices\Program;
 
-use App\Pdf\Data\Color;
-use App\Pdf\Generator;
+use Invoices\Pdf\Data\Color;
+use Invoices\Pdf\Generator;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 

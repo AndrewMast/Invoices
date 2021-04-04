@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Pdf;
+namespace Invoices\Pdf;
 
 use Illuminate\Support\Str;
 

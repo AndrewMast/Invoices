@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Program;
+namespace Invoices\Program;
 
 class MenuItem {
     public function __construct($message, $action) {

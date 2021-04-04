@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Pdf\Data;
+namespace Invoices\Pdf\Data;
 
 class Color {
     public $r;

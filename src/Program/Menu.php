@@ -1,6 +1,6 @@
 <?php
 
-namespace App\Program;
+namespace Invoices\Program;
 
 class Menu {
     public function __construct($parent, $title, $prompt = null, $error = null) {
