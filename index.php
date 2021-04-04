@@ -37,7 +37,7 @@ class Program {
 
         $copy = clone $this->settings;
 
-        $menu->exiting(function(Menu $menu) use ($copy) {
+        $menu->exiting(function() use ($copy) {
             $this->settings->{'billing-address'} = $copy->{'billing-address'};
             $this->settings->{'next-invoice-number'} = $copy->{'next-invoice-number'};
             $this->settings->{'storage-path'} = $copy->{'storage-path'};
@@ -262,7 +262,7 @@ class Program {
 
         $copy = clone $client;
 
-        $menu->exiting(function(Menu $menu) use ($client, $copy) {
+        $menu->exiting(function() use ($client, $copy) {
             $client->id = $copy->id;
             $client->name = $copy->name;
             $client->{'billed-to'} = $copy->{'billed-to'};
@@ -399,7 +399,7 @@ class Program {
 
         $copy = clone $item;
 
-        $menu->exiting(function(Menu $menu) use ($item, $copy) {
+        $menu->exiting(function() use ($item, $copy) {
             $item->name = $copy->name;
             $item->title = $copy->title;
             $item->subtitle = $copy->subtitle;
@@ -534,7 +534,7 @@ class Program {
 
         $copy = clone $prompt;
 
-        $menu->exiting(function(Menu $menu) use ($prompt, $copy) {
+        $menu->exiting(function() use ($prompt, $copy) {
             $prompt->name = $copy->name;
             $prompt->id = $copy->id;
             $prompt->type = $copy->type;
