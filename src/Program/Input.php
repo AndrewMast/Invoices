@@ -174,7 +174,7 @@ class Input {
                         $error = $this->typeUnescape(trim($matches[3]));
                     }
 
-                    $date = DateTime::createFromFormat('!' . $input_format, $output);
+                    $date = \DateTime::createFromFormat('!' . $input_format, $output);
 
                     if ($date && $date->format($input_format) === $output) {
                         $output = $date->format($output_format);
