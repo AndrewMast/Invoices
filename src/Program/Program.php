@@ -18,7 +18,7 @@ class Program {
 
         $menu->showing(function(Menu $menu) {
             $menu->items(
-                new MenuItem([['Edit settings', 'brown']], $this->createEditSettingsMenu($menu)),
+                new MenuItem([['Settings', 'brown']], $this->createSettingsMenu($menu)),
                 new MenuItem([['Create new client', 'green']], $this->createNewClientMenu($menu))
             );
 
@@ -30,6 +30,49 @@ class Program {
         $menu->show();
     }
 
+    public function createSettingsMenu(Menu $parent) {
+        $menu = new Menu($parent, 'Settings', 'Select action', 'Please select a valid action');
+
+        $menu->items(
+            new MenuItem('Edit Config', $this->createEditConfigMenu($menu)),
+            new MenuItem('Edit Settings', $this->createEditSettingsMenu($menu))
+        );
+
+        return $menu;
+    }
+
+    public function createEditConfigMenu(Menu $parent) {
+        $menu = new Menu($parent, 'Editing Settings', 'Select action', 'Please select a valid action');
+
+        $copy = clone $this->config;
+
+        $menu->exiting(function() use ($copy) {
+            $this->config->{'settings-path'} = $copy->{'settings-path'};
+            $this->config->{'storage-path'} = $copy->{'storage-path'};
+
+            $this->save();
+        });
+
+        $menu->showing(function(Menu $menu) {
+            $menu->items(
+                new MenuItem(
+                    [['Save & Edit', 'green']],
+                    $this->createSaveAndExitMenu($menu)
+                ),
+                new MenuItem(
+                    ['Edit ', ['Settings Path', 'purple'], ' (', [$this->config->{'settings-path'}, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, ['Settings Path (', ['optional', 'gray'], ')'], $this->config, 'settings-path', 'path:folder', true, settings_path())
+                ),
+                new MenuItem(
+                    ['Edit ', ['Storage Path', 'purple'], ' (', [$this->config->{'storage-path'}, 'brown'], ')'],
+                    $this->createEditAttributeMenu($menu, ['Storage Path (', ['optional', 'gray'], ')'], $this->config, 'storage-path', 'path:folder', true, output_path())
+                )
+            );
+        });
+
+        return $menu;
+    }
+
     public function createEditSettingsMenu(Menu $parent) {
         $menu = new Menu($parent, 'Editing Settings', 'Select action', 'Please select a valid action');
 
@@ -38,7 +81,6 @@ class Program {
         $menu->exiting(function() use ($copy) {
             $this->settings->{'billing-address'} = $copy->{'billing-address'};
             $this->settings->{'next-invoice-number'} = $copy->{'next-invoice-number'};
-            $this->settings->{'storage-path'} = $copy->{'storage-path'};
 
             $this->save();
         });
@@ -56,10 +98,6 @@ class Program {
                 new MenuItem(
                     ['Edit ', ['Next Invoice Number', 'purple'], ' (', [$this->settings->{'next-invoice-number'}, 'brown'], ')'],
                     $this->createEditAttributeMenu($menu, 'Next Invoice Number', $this->settings, 'next-invoice-number', 'int')
-                ),
-                new MenuItem(
-                    ['Edit ', ['Storage Path', 'purple'], ' (', [$this->settings->{'storage-path'}, 'brown'], ')'],
-                    $this->createEditAttributeMenu($menu, ['Storage Path (', ['optional', 'gray'], ')'], $this->settings, 'storage-path', 'path:folder', true, output_path())
                 )
             );
         });
@@ -77,8 +115,8 @@ class Program {
 
             $menu->items(
                 new MenuItem(['Create Next Invoice (', [$next, 'brown'], ')'], $this->createInvoiceMenu($menu, $client, $next)),
-                new MenuItem(['Create Custom Invoice'], $this->createInvoiceMenu($menu, $client)),
-                new MenuItem(['Edit Client'], $this->createEditClientMenu($menu, $client))
+                new MenuItem('Create Custom Invoice', $this->createInvoiceMenu($menu, $client)),
+                new MenuItem('Edit Client', $this->createEditClientMenu($menu, $client))
             );
         });
 
@@ -674,23 +712,6 @@ class Program {
         };
     }
 
-    public function fillSettings() {
-        if (!file_exists(output_path())) {
-            mkdir(output_path(), 0777, true);
-        }
-
-        $this->clear()->print('Enter Settings', 'brown')->nl()
-             ->input()->sp(4)->message('Billing Address')->set($address)
-             ->input('int')->sp(4)->message('Starting Invoice #')->set($invoice)
-             ->input('path:folder', true, output_path())->sp(4)->message(['Storage Path (', ['optional', 'gray'], ')'])->set($path);
-
-        file_put_contents($this->settings_file, json_encode([
-            'billing-address' => $this->unescapeAddress($address),
-            'next-invoice-number' => $invoice,
-            'storage-path' => $path,
-        ], JSON_PRETTY_PRINT) . PHP_EOL);
-    }
-
     public function unescapeAddress(string $address) {
         return str_replace(["\\t", "\\n"], ["\t", "\n"], $address);
     }
@@ -700,15 +721,27 @@ class Program {
     }
 
     public function load() {
-        if (!file_exists(store_path())) {
-            mkdir(store_path(), 0777, true);
+        if (!file_exists(config_path())) {
+            mkdir(config_path(), 0777, true);
         }
 
-        $this->clients_file = store_path('clients.json');
+        $this->config_file = config_path('config.json');
+
+        if (!file_exists($this->config_file)) {
+            $this->fillConfig();
+        }
+
+        $this->config = json_decode(file_get_contents($this->config_file));
+
+        if (!file_exists($this->settingsPath())) {
+            mkdir($this->settingsPath(), 0777, true);
+        }
+
+        $this->clients_file = $this->settingsPath('clients.json');
 
         $this->clients = new Collection(file_exists($this->clients_file) ? json_decode(file_get_contents($this->clients_file)) : []);
 
-        $this->settings_file = store_path('settings.json');
+        $this->settings_file = $this->settingsPath('settings.json');
 
         if (!file_exists($this->settings_file)) {
             $this->fillSettings();
@@ -717,6 +750,44 @@ class Program {
         $this->settings = json_decode(file_get_contents($this->settings_file));
 
         return $this;
+    }
+
+    public function fillConfig() {
+        if (!file_exists(settings_path())) {
+            mkdir(settings_path(), 0777, true);
+        }
+
+        if (!file_exists(output_path())) {
+            mkdir(output_path(), 0777, true);
+        }
+
+        $this->clear()->print('Enter Config Settings', 'brown')->nl()
+             ->input('path:folder', true, settings_path())->sp(4)->message(['Settings Path (', ['optional', 'gray'], ')'])->set($settings)
+             ->input('path:folder', true, output_path())->sp(4)->message(['Storage Path (', ['optional', 'gray'], ')'])->set($storage);
+
+        file_put_contents($this->config_file, json_encode([
+            'settings-path' => $settings,
+            'storage-path' => $storage,
+        ], JSON_PRETTY_PRINT) . PHP_EOL);
+    }
+
+    public function fillSettings() {
+        $this->clear()->print('Enter Settings', 'brown')->nl()
+             ->input()->sp(4)->message('Billing Address')->set($address)
+             ->input('int')->sp(4)->message('Starting Invoice #')->set($invoice);
+
+        file_put_contents($this->settings_file, json_encode([
+            'billing-address' => $this->unescapeAddress($address),
+            'next-invoice-number' => $invoice,
+        ], JSON_PRETTY_PRINT) . PHP_EOL);
+    }
+
+    public function settingsPath($file = '') {
+        return rtrim($this->config->{'settings-path'}, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file;
+    }
+
+    public function storagePath($file = '') {
+        return rtrim($this->config->{'storage-path'}, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file;
     }
 
     public function save() {
@@ -731,17 +802,15 @@ class Program {
 
         file_put_contents($this->settings_file, json_encode($this->settings, JSON_PRETTY_PRINT) . PHP_EOL);
 
+        file_put_contents($this->config_file, json_encode($this->config, JSON_PRETTY_PRINT) . PHP_EOL);
+
         return $this;
     }
 
     public function saveFile($file, $contents) {
-        $path = rtrim($this->settings->{'storage-path'}, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $file;
+        $path = $this->storagePath($file);
 
-        if (!file_exists($this->settings->{'storage-path'})) {
-            mkdir($this->settings->{'storage-path'}, 0777, true);
-        }
-
-        file_put_contents($path, $contents);
+        file_put_contents($this->storagePath($path), $contents);
 
         return $path;
     }

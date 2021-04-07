@@ -1,5 +1,6 @@
 .DS_Store
 .env
 /vendor
-/store
+/config
 /output
+/settings

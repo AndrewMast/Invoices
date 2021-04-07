@@ -34,8 +34,12 @@ function output_path($file = '') {
     return base_path('output' . DIRECTORY_SEPARATOR . $file);
 }
 
-function store_path($file = '') {
-    return base_path('store' . DIRECTORY_SEPARATOR . $file);
+function settings_path($file = '') {
+    return base_path('settings' . DIRECTORY_SEPARATOR . $file);
+}
+
+function config_path($file = '') {
+    return base_path('config' . DIRECTORY_SEPARATOR . $file);
 }
 
 function resource_path($file = '') {
