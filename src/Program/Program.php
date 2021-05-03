@@ -810,7 +810,7 @@ class Program {
     public function saveFile($file, $contents) {
         $path = $this->storagePath($file);
 
-        file_put_contents($this->storagePath($path), $contents);
+        file_put_contents($path, $contents);
 
         return $path;
     }
