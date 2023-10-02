@@ -9,7 +9,7 @@
         }
     ],
     "require": {
-        "php": "^7.3",
+        "php": "^8.2",
         "crabbly/fpdf-laravel": "^1.0",
         "illuminate/support": "^8.20",
         "intervention/image": "^2.5",
